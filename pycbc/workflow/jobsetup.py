@@ -34,11 +34,6 @@ import lal
 from glue import segments
 import Pegasus.DAX3 as dax
 from pycbc.workflow.core import Executable, File, FileList, Node
-from pycbc.workflow.legacy_ihope import (LegacyCohPTFInspiralExecutable,
-        LegacyCohPTFTrigCombiner, LegacyCohPTFTrigCluster,
-        LegacyCohPTFInjfinder, LegacyCohPTFInjcombiner,
-        LegacyCohPTFSbvPlotter, LegacyCohPTFEfficiency, PyGRBMakeSummaryPage)
-
 
 def int_gps_time_to_str(t):
     """Takes an integer GPS time, either given as int or lal.LIGOTimeGPS, and
@@ -101,7 +96,6 @@ def select_matchedfilter_class(curr_exe):
     """
     exe_to_class_map = {
         'pycbc_inspiral'          : PyCBCInspiralExecutable,
-        'lalapps_coh_PTF_inspiral': LegacyCohPTFInspiralExecutable,
         'pycbc_inspiral_skymax'   : PyCBCInspiralExecutable
     }
     try:
@@ -163,13 +157,7 @@ def select_generic_executable(workflow, exe_tag):
         "gstlal_inspiral_plot_background" : GstlalPlotBackground,
         "gstlal_inspiral_plotsummary"     : GstlalPlotSummary,
         "gstlal_inspiral_summary_page"    : GstlalSummaryPage,
-        "pylal_cbc_cohptf_trig_combiner" : LegacyCohPTFTrigCombiner,
-        "pylal_cbc_cohptf_trig_cluster"  : LegacyCohPTFTrigCluster,
-        "pylal_cbc_cohptf_injfinder"     : LegacyCohPTFInjfinder,
-        "pylal_cbc_cohptf_injcombiner"   : LegacyCohPTFInjcombiner,
-        "pylal_cbc_cohptf_sbv_plotter"   : LegacyCohPTFSbvPlotter,
-        "pylal_cbc_cohptf_efficiency"    : LegacyCohPTFEfficiency,
-        "pycbc_make_grb_summary_page"  : PyGRBMakeSummaryPage
+        "pycbc_condition_strain"         : PycbcConditionStrainExecutable
     }
     try:
         return exe_to_class_map[exe_name]
@@ -1711,4 +1699,38 @@ class PycbcSplitBankXmlExecutable(PycbcSplitBankExecutable):
     """ Subclass resonsible for creating jobs for pycbc_splitbank. """
 
     extension='.xml.gz'
+
+class PycbcConditionStrainExecutable(Executable):
+    """ The class responsible for creating jobs for pycbc_condition_strain. """
+
+    current_retention_level = Executable.ALL_TRIGGERS
+    def __init__(self, cp, exe_name, ifo=None, out_dir=None, universe=None,
+            tags=None):
+        super(PycbcConditionStrainExecutable, self).__init__(cp, exe_name, universe,
+              ifo, out_dir, tags)
+
+    def create_node(self, input_files, tags=None):
+        if tags is None:
+            tags = []
+        node = Node(self)
+        start_time = self.cp.get("workflow", "start-time")
+        end_time = self.cp.get("workflow", "end-time")
+        node.add_opt('--gps-start-time', start_time)
+        node.add_opt('--gps-end-time', end_time)
+        node.add_input_list_opt('--frame-files', input_files)
+
+        out_file = File(self.ifo, "gated",
+                        segments.segment(int(start_time), int(end_time)),
+                        directory=self.out_dir, store_file=self.retain_files,
+                        extension=input_files[0].name.split('.', 1)[-1],
+                        tags=tags)
+        node.add_output_opt('--output-strain-file', out_file)
+
+        out_gates_file = File(self.ifo, "output_gates",
+                              segments.segment(int(start_time), int(end_time)),
+                              directory=self.out_dir, extension='txt',
+                              store_file=self.retain_files, tags=tags)
+        node.add_output_opt('--output-gates-file', out_gates_file)
+
+        return node, out_file
 

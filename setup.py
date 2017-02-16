@@ -260,8 +260,8 @@ def get_version_info():
 
     # If this is a release or another kind of source distribution of PyCBC
     except:
-        version = '1.6.3'
-        release = 'True'
+        version = '1.7.0dev'
+        release = 'False'
         date = hash = branch = tag = author = committer = status = builder = build_date = ''
 
         with open('pycbc/version.py', 'w') as f:
@@ -355,6 +355,8 @@ setup (
                'bin/pycbc_faithsim',
                'bin/pycbc_inspiral',
                'bin/pycbc_inspiral_skymax',
+               'bin/pycbc_live',
+               'bin/pycbc_live_nagios_monitor',
                'bin/pycbc_single_template',
                'bin/pycbc_multi_inspiral',
                'bin/pycbc_make_banksim',
@@ -436,6 +438,7 @@ setup (
                'bin/inference/pycbc_inference_plot_acf',
                'bin/inference/pycbc_inference_plot_acl',
                'bin/inference/pycbc_inference_plot_corner',
+               'bin/inference/pycbc_inference_plot_geweke',
                'bin/inference/pycbc_inference_plot_movie',
                'bin/inference/pycbc_inference_plot_posterior',
                'bin/inference/pycbc_inference_plot_prior',
