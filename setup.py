@@ -452,6 +452,7 @@ setup (
                'bin/plotting/pycbc_banksim_plot_fitting_factors',
                'bin/workflows/pycbc_create_sbank_workflow',
                'bin/workflows/pycbc_create_uberbank_workflow',
+               'bin/workflows/pycbc_create_grb_uberbank_workflow',
                'bin/workflows/pycbc_make_coinc_search_workflow',
                'bin/workflows/pycbc_make_psd_estimation_workflow',
                'bin/workflows/pycbc_create_bank_verifier_workflow',
