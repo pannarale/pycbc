@@ -24,6 +24,7 @@
 """This modules defines functions for clustering and thresholding timeseries to
 produces event triggers
 """
+from __future__ import absolute_import
 import lal, numpy, copy, os.path
 
 from pycbc import WEAVE_FLAGS
@@ -38,14 +39,14 @@ from . import coinc
 def threshold(series, value):
     """Return list of values and indices values over threshold in series.
     """
-    return
+    return None, None
     
 @schemed("pycbc.events.threshold_")
 def threshold_only(series, value):
     """Return list of values and indices whose values in series are
        larger (in absolute value) than value
     """
-    return
+    return None, None
 
 #FIXME: This should be under schemed, but I don't understand that yet!
 def threshold_real_numpy(series, value):
@@ -75,7 +76,7 @@ class ThresholdCluster(object):
     """
     def __new__(cls, *args, **kwargs):
         real_cls = _threshold_cluster_factory(*args, **kwargs)
-        return real_cls(*args, **kwargs)
+        return real_cls(*args, **kwargs) # pylint:disable=not-callable
 
 # The class below should serve as the parent for all schemed classes.
 # The intention is that this class serves simply as the location for
@@ -129,11 +130,11 @@ def findchirp_cluster_over_window(times, values, window_length):
     """
     assert window_length > 0, 'Clustering window length is not positive'
 
-    from scipy.weave import inline
+    from weave import inline
     indices = numpy.zeros(len(times), dtype=int)
-    tlen = len(times)
+    tlen = len(times) # pylint:disable=unused-variable
     k = numpy.zeros(1, dtype=int)
-    absvalues = abs(values)
+    absvalues = abs(values) # pylint:disable=unused-variable
     times = times.astype(int)
     code = """
         int j = 0;
@@ -193,6 +194,21 @@ def newsnr(snr, reduced_x2, q=6., n=2.):
         return newsnr
     else:
         return newsnr[0]
+
+def newsnr_sgveto(snr, bchisq, sgchisq):
+    """ Combined SNR derived from NewSNR and Sine-Gaussian Chisq"""
+    # Test function
+    nsnr = newsnr(snr, bchisq)
+    nsnr = numpy.array(nsnr, ndmin=1)
+    sgchisq = numpy.array(sgchisq, ndmin=1)
+    t = numpy.array(sgchisq > 4, ndmin=1)
+    if len(t) > 0:
+        nsnr[t] = nsnr[t] / (sgchisq[t] / 4.0) ** 0.5
+
+    if len(nsnr) > 1:
+        return nsnr
+    else:
+        return nsnr[0]
 
 def effsnr(snr, reduced_x2, fac=250.):
     """Calculate the effective SNR statistic. See (S5y1 paper) for definition.
@@ -464,6 +480,9 @@ class EventManager(object):
 
             f['template_hash'] = th[tid]
 
+            if 'sg_chisq' in self.events.dtype.names:
+                f['sg_chisq'] = self.events['sg_chisq']
+
         if self.opt.trig_start_time:
             f['search/start_time'] = numpy.array([self.opt.trig_start_time])
             search_start_time = float(self.opt.trig_start_time)
@@ -724,7 +743,7 @@ class EventManagerMultiDet(EventManager):
                         f['gating/' + gate_type + '/pad'] = \
                                 numpy.array([g[2] for g in gating_info[gate_type]])
 
-__all__ = ['threshold_and_cluster', 'newsnr', 'effsnr',
+__all__ = ['threshold_and_cluster', 'newsnr', 'effsnr', 'newsnr_sgveto',
            'findchirp_cluster_over_window',
            'threshold', 'cluster_reduce', 'ThresholdCluster',
            'threshold_real_numpy',

@@ -14,15 +14,180 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-"""
-This module contains standard options used for inference-related programs.
+"""This module contains standard options used for inference-related programs.
 """
 
 import logging
+import numpy
+from pycbc import conversions
+from pycbc import transforms
 from pycbc.io import InferenceFile
+from pycbc.workflow import WorkflowConfigParser
 import pycbc.inference.sampler
 from pycbc.inference import likelihood
+from pycbc.pool import choose_pool
+from pycbc.psd import from_cli_multi_ifos as psd_from_cli_multi_ifos
+from pycbc.strain import from_cli_multi_ifos as strain_from_cli_multi_ifos
+from pycbc.gate import gates_from_cli, psd_gates_from_cli, apply_gates_to_td, \
+                       apply_gates_to_fd
 
+
+#-----------------------------------------------------------------------------
+#
+#                   Utilities for loading config files
+#
+#-----------------------------------------------------------------------------
+
+def convert_liststring_to_list(lstring):
+    """Checks if an argument of the configuration file is a string of a list
+    and returns the corresponding list (of strings).
+
+    The argument is considered to be a list if it starts with '[' and ends
+    with ']'. List elements should be comma separated. For example, passing
+    `'[foo bar, cat]'` will result in `['foo bar', 'cat']` being returned. If
+    the argument does not start and end with '[' and ']', the argument will
+    just be returned as is.
+    """
+    if lstring[0]=='[' and lstring[-1]==']':
+        lstring = [str(lstring[1:-1].split(',')[n].strip().strip("'"))
+                      for n in range(len(lstring[1:-1].split(',')))]
+    return lstring
+
+
+def add_config_opts_to_parser(parser):
+    """Adds options for the configuration files to the given parser.
+    """
+    parser.add_argument("--config-files", type=str, nargs="+", required=True,
+                        help="A file parsable by "
+                             "pycbc.workflow.WorkflowConfigParser.")
+    parser.add_argument("--config-overrides", type=str, nargs="+",
+                        default=None, metavar="SECTION:OPTION:VALUE",
+                        help="List of section:option:value combinations to "
+                             "add into the configuration file.")
+
+
+def config_parser_from_cli(opts):
+    """Loads a config file from the given options, applying any overrides
+    specified. Specifically, config files are loaded from the `--config-files`
+    options while overrides are loaded from `--config-overrides`.
+    """
+    # read configuration file
+    logging.info("Reading configuration file")
+    if opts.config_overrides is not None:
+        overrides = [override.split(":") for override in opts.config_overrides]
+    else:
+        overrides = None
+    return WorkflowConfigParser(opts.config_files, overrides)
+
+
+def read_args_from_config(cp, section_group=None):
+    """Given an open config file, loads the static and variable arguments to
+    use in the parameter estmation run.
+
+    Parameters
+    ----------
+    cp : WorkflowConfigParser
+        An open config parser to read from.
+    section_group : {None, str}
+        When reading the config file, only read from sections that begin with
+        `{section_group}_`. For example, if `section_group='foo'`, the
+        variable arguments will be retrieved from section
+        `[foo_variable_args]`. If None, no prefix will be appended to section
+        names.
+
+    Returns
+    -------
+    variable_args : list
+        The names of the parameters to vary in the PE run.
+    static_args : dict
+        Dictionary of names -> values giving the parameters to keep fixed.
+    """
+    logging.info("Loading arguments")
+    if section_group is not None:
+        section_prefix = '{}_'.format(section_group)
+    else:
+        section_prefix = ''
+
+    # sanity check that each parameter in [variable_args] has a priors section
+    variable_args = cp.options("{}variable_args".format(section_prefix))
+    subsections = cp.get_subsections("{}prior".format(section_prefix))
+    tags = numpy.concatenate([tag.split("+") for tag in subsections])
+    if not any(param in tags for param in variable_args):
+        raise KeyError("You are missing a priors section in the config file.")
+
+    # get parameters that do not change in sampler
+    static_args = dict([(key,cp.get_opt_tags(
+        "{}static_args".format(section_prefix), key, []))
+        for key in cp.options("{}static_args".format(section_prefix))])
+    # try converting values to float
+    for key,val in static_args.iteritems():
+        try:
+            # the following will raise a ValueError if it cannot be cast to
+            # float (as we would expect for string arguments)
+            static_args[key] = float(val)
+        except ValueError:
+            # try converting to a list of strings; this function will just
+            # return val if it does not begin (end) with [ (])
+            static_args[key] = convert_liststring_to_list(val) 
+
+    return variable_args, static_args
+
+
+def read_sampling_args_from_config(cp, section_group=None):
+    """Reads sampling parameters from the given config file.
+
+    Parameters are read from the `[({section_group}_)sampling_params]` section.
+    The options should list the variable args to transform; the parameters they
+    point to should list the parameters they are to be transformed to for
+    sampling. If a multiple parameters are transformed together, they should
+    be comma separated. Example:
+
+    .. code-block:: ini
+
+        [sampling_parameters]
+        mass1, mass2 = mchirp, logitq
+        spin1_a = logitspin1_a
+
+    Note that only the final sampling parameters should be listed, even if
+    multiple intermediate transforms are needed. (In the above example, a
+    transform is needed to go from mass1, mass2 to mchirp, q, then another one
+    needed to go from q to logitq.) These transforms should be specified
+    in separate sections; see `transforms.read_transforms_from_config` for
+    details.
+
+    Parameters
+    ----------
+    cp : WorkflowConfigParser
+        An open config parser to read from.
+    section_group : str, optional
+        Append `{section_group}_` to the section name. Default is None.
+
+    Returns
+    -------
+    sampling_params : list
+        The list of sampling parameters to use instead.
+    replaced_params : list
+        The list of variable args to replace in the sampler.
+    """
+    if section_group is not None:
+        section_prefix = '{}_'.format(section_group)
+    else:
+        section_prefix = ''
+    section = section_prefix + 'sampling_parameters'
+    replaced_params = set()
+    sampling_params = set()
+    for args in cp.options(section):
+        map_args = cp.get(section, args)
+        sampling_params.update(set(map(str.strip, map_args.split(','))))
+        replaced_params.update(set(map(str.strip, args.split(',')))) 
+    return list(sampling_params), list(replaced_params)
+
+
+#-----------------------------------------------------------------------------
+#
+#                    Utilities for setting up a sampler
+#
+#-----------------------------------------------------------------------------
 
 def add_sampler_option_group(parser):
     """Adds the options needed to set up an inference sampler.
@@ -41,8 +206,6 @@ def add_sampler_option_group(parser):
         help="Sampler class to use for finding posterior.")
     sampler_group.add_argument("--niterations", type=int, required=True,
         help="Number of iterations to perform after burn in.")
-    sampler_group.add_argument("--nprocesses", type=int, default=None,
-        help="Number of processes to use. If not given then use maximum.")
     # sampler-specific options
     sampler_group.add_argument("--nwalkers", type=int, default=None,
         help="Number of walkers to use in sampler. Required for MCMC "
@@ -68,11 +231,14 @@ def add_sampler_option_group(parser):
              "no updates will occur. To ensure that updates happen at equal "
              "intervals, make checkpoint-interval a multiple of "
              "update-interval.")
-
+    sampler_group.add_argument("--nprocesses", type=int, default=None,
+        help="Number of processes to use. If not given then use maximum.")
+    sampler_group.add_argument("--use-mpi", action='store_true', default=False,
+        help="Use MPI to parallelize the sampler")
     return sampler_group
 
 
-def sampler_from_cli(opts, likelihood_evaluator):
+def sampler_from_cli(opts, likelihood_evaluator, pool=None):
     """Parses the given command-line options to set up a sampler.
 
     Parameters
@@ -87,12 +253,145 @@ def sampler_from_cli(opts, likelihood_evaluator):
     pycbc.inference.sampler
         A sampler initialized based on the given arguments.
     """
+    # Used to help paralleize over multiple cores / MPI
+    if opts.nprocesses > 1:
+        likelihood._global_instance = likelihood_evaluator
+        likelihood_call = likelihood._call_global_likelihood
+    else:
+        likelihood_call = None
+
     sclass = pycbc.inference.sampler.samplers[opts.sampler]
     # check for consistency
     if opts.skip_burn_in and opts.min_burn_in is not None:
         raise ValueError("both skip-burn-in and min-burn-in specified")
-    return sclass.from_cli(opts, likelihood_evaluator)
 
+    pool = choose_pool(mpi=opts.use_mpi, processes=opts.nprocesses)
+
+    if pool is not None:
+        pool.count = opts.nprocesses
+
+    return sclass.from_cli(opts, likelihood_evaluator,
+                           pool=pool, likelihood_call=likelihood_call)
+
+
+#-----------------------------------------------------------------------------
+#
+#                       Utilities for loading data
+#
+#-----------------------------------------------------------------------------
+
+def add_low_frequency_cutoff_opt(parser):
+    """Adds the low-frequency-cutoff option to the given parser."""
+    # FIXME: this just uses the same frequency cutoff for every instrument for
+    # now. We should allow for different frequency cutoffs to be used; that
+    # will require (minor) changes to the Likelihood class
+    parser.add_argument("--low-frequency-cutoff", type=float, required=True,
+                        help="Low frequency cutoff for each IFO.")
+
+
+def low_frequency_cutoff_from_cli(opts):
+    """Parses the low frequency cutoff from the given options.
+
+    Returns
+    -------
+    dict
+        Dictionary of instruments -> low frequency cutoff.
+    """
+    # FIXME: this just uses the same frequency cutoff for every instrument for
+    # now. We should allow for different frequency cutoffs to be used; that
+    # will require (minor) changes to the Likelihood class
+    return {ifo: opts.low_frequency_cutoff for ifo in opts.instruments}
+
+
+def data_from_cli(opts):
+    """Loads the data needed for a likelihood evaluator from the given
+    command-line options. Gates specifed on the command line are also applied.
+
+    Parameters
+    ----------
+    opts : ArgumentParser parsed args
+        Argument options parsed from a command line string (the sort of thing
+        returned by `parser.parse_args`).
+
+    Returns
+    -------
+    strain_dict : dict
+        Dictionary of instruments -> `TimeSeries` strain.
+    stilde_dict : dict
+        Dictionary of instruments -> `FrequencySeries` strain.
+    psd_dict : dict
+        Dictionary of instruments -> `FrequencySeries` psds.
+    """
+    # get gates to apply
+    gates = gates_from_cli(opts)
+    psd_gates = psd_gates_from_cli(opts)
+
+    # get strain time series
+    strain_dict = strain_from_cli_multi_ifos(opts, opts.instruments,
+                                             precision="double")
+    # apply gates if not waiting to overwhiten
+    if not opts.gate_overwhitened:
+        logging.info("Applying gates to strain data")
+        strain_dict = apply_gates_to_td(strain_dict, gates)
+
+    # get strain time series to use for PSD estimation
+    # if user has not given the PSD time options then use same data as analysis
+    if opts.psd_start_time and opts.psd_end_time:
+        logging.info("Will generate a different time series for PSD "
+                     "estimation")
+        psd_opts = opts
+        psd_opts.gps_start_time = psd_opts.psd_start_time
+        psd_opts.gps_end_time = psd_opts.psd_end_time
+        psd_strain_dict = strain_from_cli_multi_ifos(psd_opts,
+                                                    opts.instruments,
+                                                    precision="double")
+        # apply any gates
+        logging.info("Applying gates to PSD data")
+        psd_strain_dict = apply_gates_to_td(psd_strain_dict, psd_gates)
+
+    elif opts.psd_start_time or opts.psd_end_time:
+        raise ValueError("Must give --psd-start-time and --psd-end-time")
+    else:
+        psd_strain_dict = strain_dict
+
+
+    # FFT strain and save each of the length of the FFT, delta_f, and
+    # low frequency cutoff to a dict
+    logging.info("FFT strain")
+    stilde_dict = {}
+    length_dict = {}
+    delta_f_dict = {}
+    low_frequency_cutoff_dict = low_frequency_cutoff_from_cli(opts)
+    for ifo in opts.instruments:
+        stilde_dict[ifo] = strain_dict[ifo].to_frequencyseries()
+        length_dict[ifo] = len(stilde_dict[ifo])
+        delta_f_dict[ifo] = stilde_dict[ifo].delta_f
+
+    # get PSD as frequency series
+    psd_dict = psd_from_cli_multi_ifos(opts, length_dict, delta_f_dict,
+                               low_frequency_cutoff_dict, opts.instruments,
+                               strain_dict=psd_strain_dict, precision="double")
+
+    # apply any gates to overwhitened data, if desired
+    if opts.gate_overwhitened and opts.gate is not None:
+        logging.info("Applying gates to overwhitened data")
+        # overwhiten the data
+        for ifo in gates:
+            stilde_dict[ifo] /= psd_dict[ifo]
+        stilde_dict = apply_gates_to_fd(stilde_dict, gates)
+        # unwhiten the data for the likelihood generator
+        for ifo in gates:
+            stilde_dict[ifo] *= psd_dict[ifo]
+
+    return strain_dict, stilde_dict, psd_dict
+
+
+
+#-----------------------------------------------------------------------------
+#
+#                Utilities for loading and plotting results
+#
+#-----------------------------------------------------------------------------
 
 def add_inference_results_option_group(parser):
     """Adds the options used to call pycbc.inference.results_from_cli function
@@ -112,6 +411,10 @@ def add_inference_results_option_group(parser):
     # required options
     results_reading_group.add_argument("--input-file", type=str, required=True,
         help="Path to input HDF file.")
+    results_reading_group.add_argument(
+        "--parameters-group", type=str, default=InferenceFile.samples_group,
+        choices=[InferenceFile.samples_group, InferenceFile.stats_group],
+        help="Group in the HDF InferenceFile to look for parameters.")
     results_reading_group.add_argument("--parameters", type=str, nargs="+",
         metavar="PARAM[:LABEL]",
         help="Name of parameters to plot. If none provided will load all of "
@@ -157,7 +460,7 @@ def results_from_cli(opts, load_samples=True, walkers=None):
     load_samples : {True, bool}
         Load samples from the results file using the parameters, thin_start,
         and thin_interval specified in the options. The samples are returned
-        as a WaveformArray instance.
+        as a FieldArray instance.
     walkers : {None, (list of) int}
         If loading samples, the walkers to load from. If None, will load from
         all walkers.
@@ -170,13 +473,15 @@ def results_from_cli(opts, load_samples=True, walkers=None):
         List of the parameters to use, parsed from the parameters option.
     labels : list
         List of labels to associate with the parameters.
-    samples : {None, WaveformArray}
-        If load_samples, the samples as a WaveformArray; otherwise, None.
+    samples : {None, FieldArray}
+        If load_samples, the samples as a FieldArray; otherwise, None.
     """
+
     logging.info("Reading input file")
     fp = InferenceFile(opts.input_file, "r")
     parameters = fp.variable_args if opts.parameters is None \
                  else opts.parameters
+
     # load the labels
     labels = []
     for ii,p in enumerate(parameters):
@@ -186,13 +491,24 @@ def results_from_cli(opts, load_samples=True, walkers=None):
         else:
             label = fp.read_label(p)
         labels.append(label)
+
+    # load the samples
     if load_samples:
         logging.info("Loading samples")
-        samples = fp.read_samples(parameters, walkers=walkers,
+        # check if need extra parameters for a non-sampling parameter
+        file_parameters, ts = transforms.get_common_cbc_transforms(
+                                                 parameters, fp.variable_args)
+        # read samples from file
+        samples = fp.read_samples(
+            file_parameters, walkers=walkers,
             thin_start=opts.thin_start, thin_interval=opts.thin_interval,
-            thin_end=opts.thin_end, iteration=opts.iteration)
+            thin_end=opts.thin_end, iteration=opts.iteration,
+            samples_group=opts.parameters_group)
+        # add parameters not included in file
+        samples = transforms.apply_transforms(samples, ts)
     else:
         samples = None
+
     return fp, parameters, labels, samples
 
 
@@ -223,7 +539,7 @@ def get_zvalues(fp, arg, likelihood_stats):
         zvals = likelihood_stats.loglr
         zlbl = r'$\log\mathcal{L}(\vec{\vartheta})$'
     elif arg == 'snr':
-        zvals = likelihood.snr_from_loglr(likelihood_stats.loglr)
+        zvals = conversions.snr_from_loglr(likelihood_stats.loglr)
         zlbl = r'$\rho(\vec{\vartheta})$'
     elif arg == 'logplr':
         zvals = likelihood_stats.loglr + likelihood_stats.prior
@@ -273,6 +589,20 @@ def add_plot_posterior_option_group(parser):
     pgroup.add_argument('--maxs', nargs='+', metavar='PARAM:VAL', default=[],
                         help="Same as mins, but for the maximum values to "
                              "plot.")
+    # add expected parameters options
+    pgroup.add_argument('--expected-parameters', nargs='+', metavar='PARAM:VAL',
+                        default=[],
+                        help="Specify expected parameter values to plot. If "
+                             "provided, a cross will be plotted in each axis "
+                             "that an expected parameter is provided. "
+                             "Parameter names must be "
+                             "the same as the PARAM argument in --parameters "
+                             "(or, if no parameters are provided, the same as "
+                             "the parameter name specified in the variable "
+                             "args in the input file.")
+    pgroup.add_argument('--expected-parameters-color', default='r',
+                        help="What to color the expected-parameters cross. "
+                             "Default is red.")
     return pgroup
 
 
@@ -309,6 +639,32 @@ def plot_ranges_from_cli(opts):
             raise ValueError("option --maxs not specified correctly; see help")
         maxs[x[0]] = float(x[1])
     return mins, maxs
+
+
+def expected_parameters_from_cli(opts):
+    """Parses the --expected-parameters arguments from the `plot_posterior`
+    option group.
+
+    Parameters
+    ----------
+    opts : ArgumentParser
+        The parsed arguments from the command line.
+
+    Returns
+    -------
+    dict
+        Dictionary of parameter name -> expected value. Only parameters that
+        were specified in the --expected-parameters option will be included; if
+        no parameters were provided, will return an empty dictionary.
+    """
+    expected = {}
+    for x in opts.expected_parameters:
+        x = x.split(':')
+        if len(x) != 2:
+            raise ValueError("option --expected-paramters not specified "
+                             "correctly; see help")
+        expected[x[0]] = float(x[1])
+    return expected
 
 
 def add_scatter_option_group(parser):

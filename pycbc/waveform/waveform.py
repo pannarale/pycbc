@@ -35,11 +35,23 @@ from pycbc.fft import fft
 from pycbc import pnutils
 from pycbc.waveform import utils as wfutils
 from pycbc.waveform import parameters
-from pycbc.filter import interpolate_complex_frequency
+from pycbc.filter import interpolate_complex_frequency, resample_to_delta_t
 import pycbc
 from spa_tmplt import spa_tmplt, spa_tmplt_norm, spa_tmplt_end, \
                       spa_tmplt_precondition, spa_amplitude_factor, \
                       spa_length_in_time
+
+class NoWaveformError(Exception):
+    """This should be raised if generating a waveform would just result in all
+    zeros being returned, e.g., if a requested `f_final` is <= `f_lower`.
+    """
+    pass
+
+# If this is set to True, waveform generation codes will try to regenerate
+# waveforms with known failure conditions to try to avoid the failure. For
+# example SEOBNRv3 waveforms would be regenerated with double the sample rate.
+# If this is set to False waveform failures will always raise exceptions
+fail_tolerant_waveform_generation = True
 
 default_args = (parameters.fd_waveform_params.default_dict() + \
     parameters.td_waveform_params).default_dict()
@@ -55,7 +67,6 @@ _lalsim_td_approximants = {}
 _lalsim_fd_approximants = {}
 _lalsim_enum = {}
 _lalsim_sgburst_approximants = {}
-
 
 def _check_lal_pars(p):
     """ Create a laldict object from the dictionary of waveform parameters
@@ -84,13 +95,13 @@ def _check_lal_pars(p):
     if p['eccentricity_order']!=-1:
         lalsimulation.SimInspiralWaveformParamsInsertPNEccentricityOrder(lal_pars, p['eccentricity_order'])
     if p['lambda1']:
-        lalsimulation.SimInspiralWaveformParamsInsertPNTidalLambda1(lal_pars, p['lambda1'])
+        lalsimulation.SimInspiralWaveformParamsInsertTidalLambda1(lal_pars, p['lambda1'])
     if p['lambda2']:
-        lalsimulation.SimInspiralWaveformParamsInsertPNTidalLambda2(lal_pars, p['lambda2'])
+        lalsimulation.SimInspiralWaveformParamsInsertTidalLambda2(lal_pars, p['lambda2'])
     if p['dquad_mon1']:
-        lalsimulation.SimInspiralWaveformParamsInsertPNTidaldQuadMon1(lal_pars, p['dquad_mon1'])
+        lalsimulation.SimInspiralWaveformParamsInsertdQuadMon1(lal_pars, p['dquad_mon1'])
     if p['dquad_mon2']:
-        lalsimulation.SimInspiralWaveformParamsInsertPNTidaldQuadMon2(lal_pars, p['dquad_mon2'])
+        lalsimulation.SimInspiralWaveformParamsInsertdQuadMon2(lal_pars, p['dquad_mon2'])
     if p['numrel_data']:
         lalsimulation.SimInspiralWaveformParamsInsertNumRelData(lal_pars, str(p['numrel_data']))
     if p['modes_choice']:
@@ -102,10 +113,12 @@ def _check_lal_pars(p):
     return lal_pars
 
 def _lalsim_td_waveform(**p):
+    fail_tolerant_waveform_generation
     lal_pars = _check_lal_pars(p)
     #nonGRparams can be straightforwardly added if needed, however they have to
     # be invoked one by one
-    hp1, hc1 = lalsimulation.SimInspiralChooseTDWaveform(
+    try:
+        hp1, hc1 = lalsimulation.SimInspiralChooseTDWaveform(
                float(pnutils.solar_mass_to_kg(p['mass1'])),
                float(pnutils.solar_mass_to_kg(p['mass2'])),
                float(p['spin1x']), float(p['spin1y']), float(p['spin1z']),
@@ -116,6 +129,26 @@ def _lalsim_td_waveform(**p):
                float(p['delta_t']), float(p['f_lower']), float(p['f_ref']),
                lal_pars,
                _lalsim_enum[p['approximant']])
+    except RuntimeError:
+        if not fail_tolerant_waveform_generation:
+            raise
+        # For some cases failure modes can occur. Here we add waveform-specific
+        # instructions to try to work with waveforms that are known to fail.
+        if p['approximant'] == 'SEOBNRv3':
+            # In this case we'll try doubling the sample time and trying again
+            # Don't want to get stuck in a loop though!
+            if 'delta_t_orig' not in p:
+                p['delta_t_orig'] = p['delta_t']
+            p['delta_t'] = p['delta_t'] / 2.
+            if p['delta_t_orig'] / p['delta_t'] > 9:
+                raise
+            hp, hc = _lalsim_td_waveform(**p)
+            p['delta_t'] = p['delta_t_orig']
+            hp = resample_to_delta_t(hp, hp.delta_t*2)
+            hc = resample_to_delta_t(hc, hc.delta_t*2)
+            return hp, hc
+        raise
+
     #lal.DestroyDict(lal_pars)
 
     hp = TimeSeries(hp1.data.data[:], delta_t=hp1.deltaT, epoch=hp1.epoch)
@@ -160,7 +193,7 @@ def _lalsim_fd_waveform(**p):
                             epoch=hp1.epoch)
 
     hc = FrequencySeries(hc1.data.data[:], delta_f=hc1.deltaF,
-                            epoch=hc1.epoch)                        
+                            epoch=hc1.epoch)
     #lal.DestroyDict(lal_pars)
     return hp, hc
 
@@ -221,32 +254,32 @@ cuda_fd = dict(_lalsim_fd_approximants.items() + _cuda_fd_approximants.items())
 def print_td_approximants():
     print("LalSimulation Approximants")
     for approx in _lalsim_td_approximants.keys():
-        print "  " + approx
+        print("  " + approx)
     print("CUDA Approximants")
     for approx in _cuda_td_approximants.keys():
-        print "  " + approx
+        print("  " + approx)
 
 def print_fd_approximants():
     print("LalSimulation Approximants")
     for approx in _lalsim_fd_approximants.keys():
-        print "  " + approx
+        print("  " + approx)
     print("CUDA Approximants")
     for approx in _cuda_fd_approximants.keys():
-        print "  " + approx
+        print("  " + approx)
 
 def print_sgburst_approximants():
     print("LalSimulation Approximants")
     for approx in _lalsim_sgburst_approximants.keys():
-        print "  " + approx
+        print("  " + approx)
 
 def td_approximants(scheme=_scheme.mgr.state):
-    """Return a list containing the available time domain approximants for 
+    """Return a list containing the available time domain approximants for
        the given processing scheme.
     """
     return td_wav[type(scheme)].keys()
 
 def fd_approximants(scheme=_scheme.mgr.state):
-    """Return a list containing the available fourier domain approximants for 
+    """Return a list containing the available fourier domain approximants for
        the given processing scheme.
     """
     return fd_wav[type(scheme)].keys()
@@ -279,6 +312,8 @@ def get_obj_attrs(obj):
             for slot in obj.__slots__:
                 if hasattr(obj, slot):
                     pr[slot] = getattr(obj, slot)
+        elif isinstance(obj, dict):
+            pr = obj.copy()
         else:
             for name in dir(obj):
                 try:
@@ -294,7 +329,7 @@ def props(obj, **kwargs):
     """ Return a dictionary built from the combination of defaults, kwargs,
     and the attributes of the given object.
     """
-    pr = get_obj_attrs(obj) 
+    pr = get_obj_attrs(obj)
 
     # Get the parameters to generate the waveform
     # Note that keyword arguments override values in the template object
@@ -327,7 +362,7 @@ def props_sgburst(obj, **kwargs):
 
 # Waveform generation ########################################################
 def get_fd_waveform_sequence(template=None, **kwds):
-    """Return values of the waveform evaluated at the sequence of frequency 
+    """Return values of the waveform evaluated at the sequence of frequency
     points.
 
     Parameters
@@ -363,8 +398,8 @@ def get_fd_waveform_sequence(template=None, **kwds):
                pnutils.megaparsecs_to_meters(float(p['distance'])),
                float(p['inclination']),
                lal_pars,
-               _lalsim_enum[p['approximant']], 
-               p['sample_points'].lal())        
+               _lalsim_enum[p['approximant']],
+               p['sample_points'].lal())
     return Array(hp.data.data), Array(hc.data.data)
 
 get_fd_waveform_sequence.__doc__ = get_fd_waveform_sequence.__doc__.format(
@@ -372,7 +407,7 @@ get_fd_waveform_sequence.__doc__ = get_fd_waveform_sequence.__doc__.format(
            include_label=False).lstrip(' '))
 
 def get_td_waveform(template=None, **kwargs):
-    """Return the plus and cross polarizations of a time domain waveform. 
+    """Return the plus and cross polarizations of a time domain waveform.
 
     Parameters
     ----------
@@ -438,6 +473,20 @@ def get_fd_waveform(template=None, **kwargs):
         if arg not in input_params:
             raise ValueError("Please provide " + str(arg) )
 
+    try:
+        ffunc = input_params.pop('f_final_func')
+        if ffunc != '':
+            # convert the frequency function to a value
+            input_params['f_final'] = pnutils.named_frequency_cutoffs[ffunc](
+                input_params)
+            # if the f_final is < f_lower, raise a NoWaveformError
+            if 'f_final' in input_params and (
+                    input_params['f_lower']+input_params['delta_f']
+                                        >= input_params['f_final']):
+                raise NoWaveformError("cannot generate waveform: f_lower >= f_final")
+    except KeyError:
+        pass
+
     return wav_gen[input_params['approximant']](**input_params)
 
 get_fd_waveform.__doc__ = get_fd_waveform.__doc__.format(
@@ -455,7 +504,7 @@ def get_interpolated_fd_waveform(dtype=numpy.complex64, return_hc=True,
     orig_approx = params['approximant']
     params['approximant'] = params['approximant'].replace('_INTERP', '')
     df = params['delta_f']
-    
+
     if 'duration' not in params:
         duration = get_waveform_filter_length_in_time(**params)
     elif params['duration'] > 0:
@@ -463,11 +512,11 @@ def get_interpolated_fd_waveform(dtype=numpy.complex64, return_hc=True,
     else:
         err_msg = "Waveform duration must be greater than 0."
         raise ValueError(err_msg)
-    
+
     #FIXME We should try to get this length directly somehow
     # I think this number should be conservative
     ringdown_padding = 0.5
-    
+
     df_min = 1.0 / rulog2(duration + ringdown_padding)
     # FIXME: I don't understand this, but waveforms with df_min < 0.5 will chop
     #        off the inspiral when using ringdown_padding - 0.5.
@@ -616,6 +665,7 @@ _filter_time_lengths["SEOBNRv1_ROM_EffectiveSpin"] = seobnrv2_length_in_time
 _filter_time_lengths["SEOBNRv1_ROM_DoubleSpin"] = seobnrv2_length_in_time
 _filter_time_lengths["SEOBNRv2_ROM_EffectiveSpin"] = seobnrv2_length_in_time
 _filter_time_lengths["SEOBNRv2_ROM_DoubleSpin"] = seobnrv2_length_in_time
+_filter_time_lengths["EOBNRv2HM_ROM"] = seobnrv2_length_in_time
 _filter_time_lengths["SEOBNRv2_ROM_DoubleSpin_HI"] = seobnrv2_length_in_time
 _filter_time_lengths["SEOBNRv4_ROM"] = seobnrv4_length_in_time
 _filter_time_lengths["IMRPhenomC"] = imrphenomd_length_in_time
@@ -658,24 +708,21 @@ def get_waveform_filter(out, template=None, **kwargs):
 
     if input_params['approximant'] in fd_approximants(_scheme.mgr.state):
         wav_gen = fd_wav[type(_scheme.mgr.state)]
-        
+
         duration = get_waveform_filter_length_in_time(**input_params)
-        hp, hc = wav_gen[input_params['approximant']](duration=duration,
+        hp, _ = wav_gen[input_params['approximant']](duration=duration,
                                                return_hc=False, **input_params)
-     
+
         hp.resize(n)
         out[0:len(hp)] = hp[:]
         hp = FrequencySeries(out, delta_f=hp.delta_f, copy=False)
-        
+
         hp.length_in_time = hp.chirp_length = duration
         return hp
 
     elif input_params['approximant'] in td_approximants(_scheme.mgr.state):
-        # N: number of time samples required
-        N = (n-1)*2
-        delta_f = 1.0 / (N * input_params['delta_t'])
         wav_gen = td_wav[type(_scheme.mgr.state)]
-        hp, hc = wav_gen[input_params['approximant']](**input_params)
+        hp, _ = wav_gen[input_params['approximant']](**input_params)
         # taper the time series hp if required
         if ('taper' in input_params.keys() and \
             input_params['taper'] is not None):
@@ -811,7 +858,7 @@ def waveform_norm_exists(approximant):
 def get_template_amplitude_norm(template=None, **kwargs):
     """ Return additional constant template normalization. This only affects
         the effective distance calculation. Returns None for all templates with a
-        physically meaningful amplitude. 
+        physically meaningful amplitude.
     """
     input_params = props(template,**kwargs)
     approximant = kwargs['approximant']
@@ -830,7 +877,7 @@ def get_waveform_filter_precondition(approximant, length, delta_f):
         return None
 
 def get_waveform_filter_norm(approximant, psd, length, delta_f, f_lower):
-    """ Return the normalization vector for the approximant 
+    """ Return the normalization vector for the approximant
     """
     if approximant in _filter_norms:
         return _filter_norms[approximant](psd, length, delta_f, f_lower)
@@ -866,4 +913,5 @@ __all__ = ["get_td_waveform", "get_fd_waveform", "get_fd_waveform_sequence",
            "waveform_norm_exists", "get_template_amplitude_norm",
            "get_waveform_filter_length_in_time", "get_sgburst_waveform",
            "print_sgburst_approximants", "sgburst_approximants",
-           "td_waveform_to_fd_waveform", "get_two_pol_waveform_filter"]
+           "td_waveform_to_fd_waveform", "get_two_pol_waveform_filter",
+           "NoWaveformError"]

@@ -32,8 +32,8 @@ import lalsimulation as sim
 import h5py
 from pycbc.waveform import get_td_waveform, utils as wfutils
 from pycbc.waveform import ringdown_td_approximants
-from glue.ligolw import utils as ligolw_utils
-from glue.ligolw import ligolw, table, lsctables
+from pycbc_glue.ligolw import utils as ligolw_utils
+from pycbc_glue.ligolw import ligolw, table, lsctables
 from pycbc.types import float64, float32, TimeSeries
 from pycbc.detector import Detector
 
@@ -311,7 +311,7 @@ class SGBurstInjectionSet(object):
                     + str(strain.dtype))
 
         lalstrain = strain.lal()
-        detector = Detector(detector_name)
+        #detector = Detector(detector_name)
         earth_travel_time = lal.REARTH_SI / lal.C_SI
         t0 = float(strain.start_time) - earth_travel_time
         t1 = float(strain.end_time) + earth_travel_time

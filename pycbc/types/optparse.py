@@ -61,8 +61,9 @@ class MultiDetOptionAction(argparse.Action):
             raise ValueError('nargs for append actions must be > 0; if arg '
                              'strings are not supplying the value to append, '
                              'the append const action may be more appropriate')
-        if const is not None and nargs != OPTIONAL:
-            raise ValueError('nargs must be %r to supply const' % OPTIONAL)
+        if const is not None and nargs != argparse.OPTIONAL:
+            raise ValueError('nargs must be %r to supply const' 
+                             % argparse.OPTIONAL)
         super(MultiDetOptionAction, self).__init__(
             option_strings=option_strings,
             dest=dest,
@@ -331,7 +332,7 @@ def positive_float(s):
     err_msg = "must be a positive number, not %r" % s
     try:
         value = float(s)
-    except ValueError, e:
+    except ValueError:
         raise argparse.ArgumentTypeError(err_msg)
     if value <= 0:
         raise argparse.ArgumentTypeError(err_msg)
@@ -346,7 +347,7 @@ def nonnegative_float(s):
     err_msg = "must be either positive or zero, not %r" % s
     try:
         value = float(s)
-    except ValueError, e:
+    except ValueError:
         raise argparse.ArgumentTypeError(err_msg)
     if value < 0:
         raise argparse.ArgumentTypeError(err_msg)

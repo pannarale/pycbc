@@ -71,11 +71,11 @@ Each parameter in ``[variable_args]`` must have a subsection in ``[prior]``.
 To create a subsection use the ``-`` char, eg. for chirp mass do ``[prior-mchirp]``.
 
 Each prior subsection must have a ``name`` option that identifies what prior to use.
-These distributions are described in :py:mod:`pycbc.inference.distributions`.
+These distributions are described in :py:mod:`pycbc.distributions`.
 A list of all distributions that can be used is found with
 
-.. literalinclude:: ../examples/inference/list_distributions.py
-.. command-output:: python ../examples/inference/list_distributions.py
+.. literalinclude:: ../examples/distributions/list_distributions.py
+.. command-output:: python ../examples/distributions/list_distributions.py
 
 A simple example is given in the subsection below.
 
@@ -114,7 +114,7 @@ An example configuration file (named ``inference.ini``) is::
     ; coalescence time prior
     name = uniform
     min-tc = 1126259461.8
-    max-tc= 1126259462.2
+    max-tc = 1126259462.2
 
     [prior-mchirp]
     name = uniform
@@ -131,32 +131,26 @@ An example configuration file (named ``inference.ini``) is::
     min-spin1_a = 0.0
     max-spin1_a = 0.9
 
-    [prior-spin1_azimuthal]
-    name = uniform
-    min-spin1_azimuthal = 0.
-    max-spin1_azimuthal = 6.283185307179586
-
-    [prior-spin1_polar]
-    name = sin_angle
+    [prior-spin1_polar+spin1_azimuthal]
+    name = uniform_solidangle
+    polar-angle = spin1_polar
+    azimuthal-angle = spin1_azimuthal
 
     [prior-spin2_a]
     name = uniform
     min-spin2_a = 0.0
     max-spin2_a = 0.9
 
-    [prior-spin2_azimuthal]
-    name = uniform
-    min-spin2_azimuthal = 0.
-    max-spin2_azimuthal = 6.283185307179586
-
-    [prior-spin2_polar]
-    name = sin_angle
+    [prior-spin2_polar+spin2_azimuthal]
+    name = uniform_solidangle
+    polar-angle = spin2_polar
+    azimuthal-angle = spin2_azimuthal
 
     [prior-distance]
     ; distance prior
     name = uniform
     min-distance = 10
-    max-distance = 500
+    max-distance = 1000
 
     [prior-coa_phase]
     ; coalescence phase prior
@@ -164,9 +158,7 @@ An example configuration file (named ``inference.ini``) is::
 
     [prior-inclination]
     ; inclination prior
-    name = uniform_angle
-    min-inclination = 0
-    max-inclination = 1
+    name = sin_angle
 
     [prior-ra+dec]
     ; sky position prior
@@ -250,6 +242,9 @@ An example of running ``pycbc_inference`` to analyze the injection in fake data:
     N_ITERATIONS=12000
     N_CHECKPOINT=1000
     PROCESSING_SCHEME=cpu
+
+    # the following sets the number of cores to use; adjust as needed to
+    # your computer's capabilities
     NPROCS=12
 
     # get coalescence time as an integer
@@ -299,10 +294,41 @@ An example of running ``pycbc_inference`` to analyze the injection in fake data:
 GW150914 example
 ----------------
 
-You can reuse ``inference.ini`` from the previous example to analyze a signal in real data::
+With a minor change to the ``tc`` prior, you can reuse ``inference.ini`` from the previous example to analyze the data containing GW150914. Change the ``[prior-tc]`` section to::
+
+    [prior-tc]
+    ; coalescence time prior
+    name = uniform
+    min-tc = 1126259462.32
+    max-tc = 1126259462.52
+
+Next, you need to obtain the real LIGO data containing GW150914. Do one of
+the following:
+
+* **If you are a LIGO member and are running on a LIGO Data Grid cluster:**
+  you can use the LIGO data server to automatically obtain the frame files.
+  Simply set the following environment variables::
+
+    FRAMES="--frame-type H1:H1_HOFT_C02 L1:L1_HOFT_C02"
+    CHANNELS="H1:H1:DCS-CALIB_STRAIN_C02 L1:L1:DCS-CALIB_STRAIN_C02"
+
+* **If you are not a LIGO member, or are not running on a LIGO Data Grid
+  cluster:** you need to obtain the data from the
+  `LIGO Open Science Center <https://losc.ligo.org>`_. First run the following
+  commands to download the needed frame files to your working directory::
+
+    wget https://losc.ligo.org/s/events/GW150914/H-H1_LOSC_4_V2-1126257414-4096.gwf
+    wget https://losc.ligo.org/s/events/GW150914/L-L1_LOSC_4_V2-1126257414-4096.gwf
+
+  Then set the following enviornment variables::
+
+    FRAMES="--frame-files H1:H-H1_LOSC_4_V2-1126257414-4096.gwf L1:L-L1_LOSC_4_V2-1126257414-4096.gwf"
+    CHANNELS="H1:LOSC-STRAIN L1:LOSC-STRAIN"
+
+Now run::
 
     # trigger parameters
-    TRIGGER_TIME=1126259462.0
+    TRIGGER_TIME=1126259462.42
 
     # data to use
     # the longest waveform covered by the prior must fit in these times
@@ -319,16 +345,11 @@ You can reuse ``inference.ini`` from the previous example to analyze a signal in
     PSD_STRIDE=4
     PSD_DATA_LEN=1024
 
-    # frame type and channel
-    FRAMES="H1:H1_HOFT_C02 L1:L1_HOFT_C02"
-    CHANNELS="H1:H1:DCS-CALIB_STRAIN_C02 L1:L1:DCS-CALIB_STRAIN_C02"
-
     # sampler parameters
     CONFIG_PATH=inference.ini
     OUTPUT_PATH=inference.hdf
     SEGLEN=8
     IFOS="H1 L1"
-    STRAIN="H1:aLIGOZeroDetHighPower L1:aLIGOZeroDetHighPower"
     SAMPLE_RATE=2048
     F_HIGHPASS=20
     F_MIN=30.
@@ -337,14 +358,17 @@ You can reuse ``inference.ini`` from the previous example to analyze a signal in
     N_ITERATIONS=12000
     N_CHECKPOINT=1000
     PROCESSING_SCHEME=cpu
+
+    # the following sets the number of cores to use; adjust as needed to
+    # your computer's capabilities
     NPROCS=12
 
     # get coalescence time as an integer
     TRIGGER_TIME_INT=${TRIGGER_TIME%.*}
 
     # start and end time of data to read in
-    GPS_START_TIME=$((${TRIGGER_TIME_INT} - ${SEGLEN}))
-    GPS_END_TIME=$((${TRIGGER_TIME_INT} + ${SEGLEN}))
+    GPS_START_TIME=$((${TRIGGER_TIME_INT} - ${SEARCH_BEFORE} - ${PSD_INVLEN}))
+    GPS_END_TIME=$((${TRIGGER_TIME_INT} + ${SEARCH_AFTER} + ${PSD_INVLEN}))
 
     # start and end time of data to read in for PSD estimation
     PSD_START_TIME=$((${GPS_START_TIME} - ${PSD_DATA_LEN}/2))
@@ -362,7 +386,7 @@ You can reuse ``inference.ini`` from the previous example to analyze a signal in
         --gps-start-time ${GPS_START_TIME} \
         --gps-end-time ${GPS_END_TIME} \
         --channel-name ${CHANNELS} \
-        --frame-type ${FRAMES} \
+        ${FRAMES} \
         --strain-high-pass ${F_HIGHPASS} \
         --pad-data ${PAD_DATA} \
         --psd-estimation ${PSD_ESTIMATION} \
@@ -390,11 +414,6 @@ You can reuse ``inference.ini`` from the previous example to analyze a signal in
         --save-stilde \
         --force
 
-To get data we used ``--frame-type`` which will query the LIGO Data
-Replicator (LDR) server to locate the frame files for us. You can also
-use ``--frame-files`` or ``--frame-cache`` if you have a list or LAL cache
-file of frames you wish to use.
-
 ----------------------------------------------------
 HDF output file handler (``pycbc.io.InferenceFile``)
 ----------------------------------------------------
@@ -412,7 +431,7 @@ To get all samples for ``distance`` from the first walker you can do::
     print samples.distance
 
 The function ``InferenceFile.read_samples`` includes the options to thin the samples.
-By default the function will return samples beginning at the end of the burn-in to the last written sample, and will use the autocorrelation length (ACL) calcualted by ``pycbc_inference`` to select the indepdedent samples.
+By default the function will return samples beginning at the end of the burn-in to the last written sample, and will use the autocorrelation length (ACL) calculated by ``pycbc_inference`` to select the indepdedent samples.
 You can supply ``thin_start``, ``thin_end``, and ``thin_interval`` to override this. To read all samples you would do::
 
     samples = fp.read_samples("distance", walkers=0, thin_start=0, thin_end=-1, thin_interval=1)
@@ -420,7 +439,7 @@ You can supply ``thin_start``, ``thin_end``, and ``thin_interval`` to override t
 
 Some standard parameters that are derived from the variable arguments (listed via ``fp.variable_args``) can also be retrieved. For example, if ``fp.variable_args`` includes ``mass1`` and ``mass2``, then you can retrieve the chirp mass with::
 
-   samples = samples = fp.read_samples("mchirp")
+   samples = fp.read_samples("mchirp")
    print samples.mchirp
 
 In this case, ``fp.read_samples`` will retrieve ``mass1`` and ``mass2`` (since they are needed to compute chirp mass); ``samples.mchirp`` then returns an array of the chirp mass computed from ``mass1`` and ``mass2``.
@@ -488,10 +507,12 @@ There are also options for thinning the chains of samples from the command line,
     INPUT_FILE=inference.hdf
     OUTPUT_FILE=scatter.png
     pycbc_inference_plot_posterior \
-        --iteration ${ITER} \
         --input-file ${INPUT_FILE} \
         --output-file ${OUTPUT_FILE} \
         --plot-scatter \
+        --thin-start ${THIN_START} \
+        --thin-interval ${THIN_INTERVAL} \
+        --thin-end ${THIN_END} \
         --plot-marginal \
         --z-arg logplr \
         --parameters "ra*12/pi:$\alpha$ (h)" \

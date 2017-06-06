@@ -27,9 +27,9 @@ from pycbc.inject import InjectionSet
 import unittest
 import numpy
 import itertools
-from glue.ligolw import ligolw
-from glue.ligolw import lsctables
-from glue.ligolw import utils
+from pycbc_glue.ligolw import ligolw
+from pycbc_glue.ligolw import lsctables
+from pycbc_glue.ligolw import utils
 from utils import parse_args_cpu_only, simple_exit
 
 # Injection tests only need to happen on the CPU
@@ -131,7 +131,7 @@ class TestInjection(unittest.TestCase):
         injections = InjectionSet(self.inj_file.name)
         for det in self.detectors:
             for inj in self.injections:
-                ts = TimeSeries(numpy.zeros(10 * self.sample_rate),
+                ts = TimeSeries(numpy.zeros(int(10 * self.sample_rate)),
                                 delta_t=1/self.sample_rate,
                                 epoch=lal.LIGOTimeGPS(inj.end_time - 5),
                                 dtype=numpy.float64)
@@ -151,7 +151,7 @@ class TestInjection(unittest.TestCase):
         injections = InjectionSet(self.inj_file.name)
         for det in self.detectors:
             for epoch in clear_times:
-                ts = TimeSeries(numpy.zeros(10 * self.sample_rate),
+                ts = TimeSeries(numpy.zeros(int(10 * self.sample_rate)),
                                 delta_t=1/self.sample_rate,
                                 epoch=lal.LIGOTimeGPS(epoch),
                                 dtype=numpy.float64)

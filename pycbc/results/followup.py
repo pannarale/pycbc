@@ -34,7 +34,7 @@ import sys
 if not 'matplotlib.backends' in sys.modules:
     matplotlib.use('agg')
 import pylab, mpld3, mpld3.plugins
-from glue.segments import segment
+from pycbc_glue.segments import segment
 
 def columns_from_file_list(file_list, columns, ifo, start, end):
     """ Return columns of information stored in single detector trigger
@@ -108,7 +108,7 @@ def trigger_timeseries_plot(file_list, ifos, start, end):
         trigs = columns_from_file_list(file_list,
                                        ['snr', 'end_time'],
                                        ifo, start, end)
-        print trigs
+        print(trigs)
         pylab.scatter(trigs['end_time'], trigs['snr'], label=ifo,     
                       color=ifo_color[ifo])
                             

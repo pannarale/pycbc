@@ -21,9 +21,10 @@
 #
 # =============================================================================
 #
+from __future__ import absolute_import
 import numpy, pycbc
 from pycbc.types import real_same_precision_as
-from scipy.weave import inline
+from weave import inline
 from pycbc import WEAVE_FLAGS
 
 if pycbc.HAVE_OMP:
@@ -40,7 +41,7 @@ def chisq_accum_bin_inline(chisq, q):
     
     chisq = numpy.array(chisq.data, copy=False)
     q = numpy.array(q.data, copy=False)
-    N = len(chisq)
+    N = len(chisq) # pylint:disable=unused-variable
     code = """
         #pragma omp parallel for
         for (int i=0; i<N; i++){
@@ -152,9 +153,9 @@ def shift_sum(v1, shifts, bins):
     shifts = numpy.array(shifts, dtype=real_type)
     
     bins = numpy.array(bins, dtype=numpy.uint32)
-    blen = len(bins) - 1
+    blen = len(bins) - 1 # pylint:disable=unused-variable
     v1 = numpy.array(v1.data, copy=False)
-    slen = len(v1)
+    slen = len(v1) # pylint:disable=unused-variable
 
     if v1.dtype.name == 'complex64':
         code = point_chisq_code_single

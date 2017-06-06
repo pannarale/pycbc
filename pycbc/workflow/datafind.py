@@ -29,11 +29,12 @@ documentation for this function can be found here:
 https://ldas-jobs.ligo.caltech.edu/~cbc/docs/pycbc/ahope/datafind.html
 """
 
+from __future__ import print_function
 import os, copy
 import urlparse
 import logging
-from glue import segments, lal
-from glue.ligolw import utils, table, lsctables, ligolw
+from pycbc_glue import segments, lal
+from pycbc_glue.ligolw import utils, table, lsctables, ligolw
 from pycbc.workflow.core import SegFile, File, FileList, make_analysis_dir
 from pycbc.frame import datafind_connection
 
@@ -399,7 +400,6 @@ def setup_datafind_runtime_cache_multi_calls_perifo(cp, scienceSegs,
     # Now ready to loop over the input segments
     datafindouts = []
     datafindcaches = []
-    ifos = scienceSegs.keys()
     logging.info("Querying datafind server for all science segments.")
     for ifo, scienceSegsIfo in scienceSegs.items():
         observatory = ifo[0].upper()
@@ -485,7 +485,6 @@ def setup_datafind_runtime_cache_single_call_perifo(cp, scienceSegs, outputDir,
     # Now ready to loop over the input segments
     datafindouts = []
     datafindcaches = []
-    ifos = scienceSegs.keys()
     logging.info("Querying datafind server for all science segments.")
     for ifo, scienceSegsIfo in scienceSegs.items():
         observatory = ifo[0].upper()
@@ -701,6 +700,9 @@ def convert_cachelist_to_filelist(datafindcache_list):
                     currFile.PFN(frame.url.replace(
                         'file:///cvmfs/oasis.opensciencegrid.org/',
                         'gsiftp://red-gridftp.unl.edu/user/'), site='osg')
+                    currFile.PFN(frame.url.replace(
+                        'file:///cvmfs/oasis.opensciencegrid.org/',
+                        'gsiftp://ldas-grid.ligo.caltech.edu/hdfs/'), site='osg')
             else:
                 currFile.PFN(frame.url, site='notlocal')
             datafind_filelist.append(currFile)
@@ -947,8 +949,8 @@ def run_datafind_instance(cp, outputDir, connection, observatory, frameType,
     for entry in dfCache:
         start = str(int(entry.segment[0]))
         duration = str(int(abs(entry.segment)))
-        print >> fP, "%s %s %s %s %s" \
-            %(entry.observatory, entry.description, start, duration, entry.url)
+        print("%s %s %s %s %s" \
+              % (entry.observatory, entry.description, start, duration, entry.url), file=fP)
         entry.segment = segments.segment(int(entry.segment[0]), int(entry.segment[1]))
 
     fP.close()

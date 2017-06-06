@@ -809,6 +809,7 @@ Then create the cache file as follows:
 3. This page will show three output cache files that contain the URLs of the data created by the workflow. Locate the file that ends ``main.map`` and download it by clicking on the **Link to file**. This file contains the main intermediate and output data products of the workflow.
 
 4. If only category 2 and higher vetoes have change, remove the output files that match the following strings from the output map file: 
+
   * ``VETOTIME`` to remove the files containing the old veto segments.
   * ``LIGOLW_COMBINE_SEGMENTS`` to remove the files that combine the veto segments into categories.
   * ``CUMULATIVE_CAT_12H_VETO_SEGMENTS`` to remove the files that contain times to veto.
@@ -821,6 +822,7 @@ Then create the cache file as follows:
   * ``html`` to remove any output web pages genereated.
   * ``png`` to remove any output plots generated.
   * ``dax`` to remove any follow-up workflows generated.
+
 This can be acomplished with the following command::
 
     egrep -v '(VETOTIME|LIGOLW_COMBINE_SEGMENTS|CUMULATIVE_CAT_12H_VETO_SEGMENTS|COINC|FIT|STATMAP|INJFIND|PAGE|FOREGROUND_CENSOR|html|png|dax)' /path/to/main.map > /path/to/reuse_cache.map
@@ -843,7 +845,7 @@ from the previous workflow.
 
 To do this, ``cd`` into the ``local-site-scratch/work`` directory of your
 failed workflow. For example, if you used ``--output-dir output`` when
-planning the workflow, the then run the command::
+planning the workflow, and then run the command::
 
     cd /path/to/workflow/output/local-site-scratch/work
 
@@ -856,21 +858,8 @@ Once in the ``main_ID0000001`` directory, run the command::
     for pfn in `find . -type f | sed 's+^./++g'` ; do echo $pfn file://`pwd`/$pfn pool=\"local\" ; done | egrep -v '(dax|map)' > /path/to/partial_workflow.map
 
 changing ``/path/to`` to a location where you want to save the cache.
-
-If your run used the Open Science Grid, you will need to do the same thing for
-the ``osg-site-scratch`` directory. In this case::
-
-    cd /path/to/workflow/output/osg-site-scratch/work
-
-and change into the directory that ends with ``main_ID0000001``. Then run the
-same command as above::
-
-    for pfn in `find . -type f | sed 's+^./++g'` ; do echo $pfn file://`pwd`/$pfn pool=\"local\" ; done | egrep -v '(dax|map)' >> /path/to/partial_workflow.map
-
-but **note** the ``>>`` rather than ``>`` to append to the file ``partial_workflow.map``, rather than deteling the existing file and creating a new file.
  
 Now you can than use the ``partial_workflow.map`` cache file as the ``--cache-file`` argument to ``pycbc_submit_dax``.
-
 
 -----------------------------------------------
 Using partial products from a previous workflow
@@ -922,6 +911,21 @@ There are a number of requirements on the machine on which the workflow will be 
 Configuring the workflow
 ------------------------
 
+.. note::
+
+    Standard PyCBC installs build a version of ``pycbc_inspiral`` that uses weave
+    to compile code at runtime. Many OSG machines do not have all of the
+    compiler tools required to support weave compilation. In order to run on
+    the OSG, the ``pycbc_inspiral`` executable must be built as a PyInstaller
+    bundle that contains all of the weave-compiled code inside the bundle.
+    This bundle must be built on a lowest-common denominator platform so that
+    the shared libraries that it needs at runtime (e.g. glibc) are available.
+    RHEL6 (or a similar derivative) is a suitable platform. The ``/cvmfs``
+    filesystem contains ``pycbc_inspiral`` bundles that are built on the
+    ``x86_64_rhel_6`` platform and are suitable for use on the OSG. For
+    instructions on how to build PyInstaller bundled executables, see the page :ref:`building_bundled_executables`.
+
+
 In order for ``pycbc_inspiral`` to be sent to worker nodes it must be
 available via a remote protocol, either http, gsiftp, or CVMFS. Releases of
 pycbc are installed in CVMFS and the LDG head nodes run a gridftp server that
@@ -930,19 +934,22 @@ can serve your own development copy.  Specify this path when you run
 give the following argument to the ``--config-overrides`` option (changing the
 path to point to the release that you want to use)::
 
-    'executables:inspiral:/cvmfs/oasis.opensciencegrid.org/ligo/sw/pycbc/x86_64_rhel_6/bundle/v1.5.7/pycbc_inspiral'
+    'executables:inspiral:/cvmfs/oasis.opensciencegrid.org/ligo/sw/pycbc/x86_64_rhel_6/bundle/v1.6.6/pycbc_inspiral'
 
 If you are running your own build of ``pycbc_inspiral``, you will need to give
 a path to a gsiftp URL and tell Pegasus that the executable is not installed
 on the OSG with the two ``--config-overrides`` options::
 
-    'executables:inspiral:gsiftp://server.hostname/path/to/pycbc_inspiral' \
+    'executables:inspiral:gsiftp://server.hostname/path/to/pycbc_inspiral'
+
+Make sure this executable is build following the instructions on the page :ref:`building_bundled_executables`.
 
 Add the following to the list of ``--config-overrides`` when running ``pycbc_make_coinc_search_workflow`` to tell Pegasus to run the inspiral code on the OSG::
      
     'pegasus_profile-inspiral:pycbc|site:osg'
     'pegasus_profile-inspiral:hints|execution.site:osg'
     'pegasus_profile-inspiral:pycbc|installed:False'
+    'inspiral:fixed-weave-cache'
 
 You also need a ``--config-overrides`` to ``pycbc_make_coinc_search_workflow`` that sets the staging site for the main workflow to the local site. To do this, add the following argument, replacing ``${WORKFLOW_NAME}`` with the string that is given as the argument to the option ``--workflow-name``::
 

@@ -218,6 +218,7 @@ for num_event in range(num_events):
         curr_params['mass2'] = hd_sngl.mass2
         curr_params['spin1z'] = hd_sngl.spin1z
         curr_params['spin2z'] = hd_sngl.spin2z
+        curr_params['f_lower'] = hd_sngl.f_lower
         # don't require precessing template info if not present
         try:
             curr_params['spin1x'] = hd_sngl.spin1x
@@ -245,5 +246,5 @@ for num_event in range(num_events):
     layouts += list(layout.grouper(files, 2))
     num_event += 1
 
-workflow.save(filename=args.output_file, output_map=args.output_map)
+workflow.save(filename=args.output_file, output_map_path=args.output_map)
 layout.two_column_layout(args.output_dir, layouts)

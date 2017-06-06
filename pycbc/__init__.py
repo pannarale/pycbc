@@ -24,19 +24,10 @@
 #
 """PyCBC contains a toolkit for CBC gravitational wave analysis
 """
+from __future__ import (absolute_import, print_function)
 import subprocess, os, sys, tempfile
 import logging
 import signal
-
-# We need to allow a try/except here to allow for importing during install
-# of pycbc, where we can't guarantee that scipy is installed yet.
-try:
-    import scipy.weave.inline_tools
-    from . import weave as pycbc_weave
-    scipy.weave.inline_tools._compile_function = scipy.weave.inline_tools.compile_function
-    scipy.weave.inline_tools.compile_function = pycbc_weave.pycbc_compile_function
-except:
-    pass
 
 try:
     # This will fail when pycbc is imported during the build process,
@@ -79,7 +70,8 @@ try:
     # This is a crude check to make sure that the driver is installed
     try:
         loaded_modules = subprocess.Popen(['lsmod'], stdout=subprocess.PIPE).communicate()[0]
-        if str.find(loaded_modules, "nvidia") == -1:
+        loaded_modules = loaded_modules.decode()
+        if 'nvidia' not in loaded_modules:
             raise ImportError("nvidia driver may not be installed correctly")
     except OSError:
         pass
@@ -129,12 +121,14 @@ _cache_dir_path = os.path.join(_cache_dir_path, pycbc_version)
 _cache_dir_path = os.path.join(_cache_dir_path, git_hash)
 if os.environ.get("NO_TMPDIR", None):
     if os.environ.get("INITIAL_LOG_LEVEL", 0) >= 10:
-        print >>sys.stderr, "__init__: Skipped creating %s as NO_TEMPDIR is set" % _cache_dir_path
+        print("__init__: Skipped creating %s as NO_TEMPDIR is set"
+              % _cache_dir_path, file=sys.stderr)
 else:
     try: os.makedirs(_cache_dir_path)
     except OSError: pass
     if os.environ.get("INITIAL_LOG_LEVEL", 0) >= 10:
-        print >>sys.stderr, "__init__: Setting weave cache to %s" % _cache_dir_path
+        print("__init__: Setting weave cache to %s" % _cache_dir_path,
+              file=sys.stderr)
 os.environ['PYTHONCOMPILED'] = _cache_dir_path
 
 # Check for MKL capability
@@ -142,7 +136,7 @@ try:
     import pycbc.fft.mkl
     HAVE_MKL=True
 except ImportError as e:
-    print e
+    print(e)
     HAVE_MKL=False
     
 
