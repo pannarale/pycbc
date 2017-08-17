@@ -196,7 +196,8 @@ class FDomainCBCGenerator(BaseCBCGenerator):
     --------
     Initialize a generator:
 
-    >>> generator = waveform.FDomainCBCGenerator(variable_args=['mass1', 'mass2'], delta_f=1./32, f_lower=30., approximant='TaylorF2')
+    >>> from pycbc.waveform.generator import FDomainCBCGenerator
+    >>> generator = FDomainCBCGenerator(variable_args=['mass1', 'mass2'], delta_f=1./32, f_lower=30., approximant='TaylorF2')
 
     Create a waveform with the variable arguments (in this case, mass1, mass2):
 
@@ -207,7 +208,7 @@ class FDomainCBCGenerator(BaseCBCGenerator):
     Initialize a generator using mchirp, eta as the variable args, and generate
     a waveform:
 
-    >>> generator = waveform.FDomainCBCGenerator(variable_args=['mchirp', 'eta'], delta_f=1./32, f_lower=30., approximant='TaylorF2')
+    >>> generator = FDomainCBCGenerator(variable_args=['mchirp', 'eta'], delta_f=1./32, f_lower=30., approximant='TaylorF2')
     >>> generator.generate(mchirp=1.5, eta=0.25)
         (<pycbc.types.frequencyseries.FrequencySeries at 0x109a104d0>,
          <pycbc.types.frequencyseries.FrequencySeries at 0x109a10b50>)
@@ -248,7 +249,8 @@ class TDomainCBCGenerator(BaseCBCGenerator):
     --------
     Initialize a generator:
 
-    >>> generator = waveform.TDomainCBCGenerator(variable_args=['mass1', 'mass2'], delta_t=1./4096, f_lower=30., approximant='TaylorT4')
+    >>> from pycbc.waveform.generator import TDomainCBCGenerator
+    >>> generator = TDomainCBCGenerator(variable_args=['mass1', 'mass2'], delta_t=1./4096, f_lower=30., approximant='TaylorT4')
 
     Create a waveform with the variable arguments (in this case, mass1, mass2):
 
@@ -259,7 +261,7 @@ class TDomainCBCGenerator(BaseCBCGenerator):
     Initialize a generator using mchirp, eta as the variable args, and generate
     a waveform:
 
-    >>> generator = waveform.TDomainCBCGenerator(variable_args=['mchirp', 'eta'], delta_t=1./4096, f_lower=30., approximant='TaylorT4')
+    >>> generator = TDomainCBCGenerator(variable_args=['mchirp', 'eta'], delta_t=1./4096, f_lower=30., approximant='TaylorT4')
     >>> generator.generate(mchirp=1.75, eta=0.2)
         (<pycbc.types.timeseries.TimeSeries at 0x116ac6050>,
          <pycbc.types.timeseries.TimeSeries at 0x116ac6950>)
@@ -281,49 +283,58 @@ class TDomainCBCGenerator(BaseCBCGenerator):
         return hp, hc
 
 
-class FDomainRingdownGenerator(BaseGenerator):
-    """Uses ringdown.get_fd_qnm as a generator function to create frequency-
-    domain ringdown waveforms in the radiation frame; i.e., with no detector response
-    function applied. For more details, see BaseGenerator.
-
-    Examples
-    --------
-    Initialize a generator:
-
-    >>> generator = waveform.FDomainRingdownGenerator(variable_args=['tau', 'f_0', 'amp', 'phi'], delta_f=1./32, f_lower=30., f_final=500)
-
-    Create a ringdown with the variable arguments (in this case, tau, f_0):
-
-    >>> generator.generate(tau=5., f_0=100., amp=1., phi=0.)
-        (<pycbc.types.frequencyseries.FrequencySeries at 0x1110c1450>,
-         <pycbc.types.frequencyseries.FrequencySeries at 0x1110c1510>)
-
-    """
-    def __init__(self, variable_args=(), **frozen_params):
-        super(FDomainRingdownGenerator, self).__init__(ringdown.get_fd_qnm,
-            variable_args=variable_args, **frozen_params)
-
-class FDomainMultiModeRingdownGenerator(BaseGenerator):
-    """Uses ringdown.get_fd_lm_allmodes as a generator function to create 
-    frequency-domain ringdown waveforms with higher modes in the radiation 
-    frame; i.e., with no detector response function applied. 
+class FDomainMassSpinRingdownGenerator(BaseGenerator):
+    """Uses ringdown.get_fd_from_final_mass_spin as a generator function to
+    create frequency-domain ringdown waveforms with higher modes in the
+    radiation frame; i.e., with no detector response function applied. 
     For more details, see BaseGenerator.
 
     Examples
     --------
     Initialize a generator:
 
-    >>> generator = waveform.FDomainMultiModeRingdownGenerator(variable_args=['final_mass', 'final_spin', 'lmns','amp220','amp210','phi220','phi210'], delta_f=1./32, f_lower=30., f_final=500)
+    >>> from pycbc.waveform.generator import FDomainMassSpinRingdownGenerator
+    >>> generator = FDomainMassSpinRingdownGenerator(variable_args=['final_mass',
+                    'final_spin','amp220','amp210','phi220','phi210'], lmns=['221','211'],
+                    delta_f=1./32, f_lower=30., f_final=500)
 
     Create a ringdown with the variable arguments:
 
-    >>> generator.generate(final_mass=65., final_spin=0.7, lmns=['221','211'], amp220=1e-21, amp210=1./10, phi220=0., phi210=0.)
+    >>> generator.generate(final_mass=65., final_spin=0.7,
+                           amp220=1e-21, amp210=1./10, phi220=0., phi210=0.)
         (<pycbc.types.frequencyseries.FrequencySeries at 0x51614d0>,
          <pycbc.types.frequencyseries.FrequencySeries at 0x5161550>)
 
     """
     def __init__(self, variable_args=(), **frozen_params):
-        super(FDomainMultiModeRingdownGenerator, self).__init__(ringdown.get_fd_lm_allmodes,
+        super(FDomainMassSpinRingdownGenerator, self).__init__(ringdown.get_fd_from_final_mass_spin,
+            variable_args=variable_args, **frozen_params)
+
+class FDomainFreqTauRingdownGenerator(BaseGenerator):
+    """Uses ringdown.get_fd_from_freqtau as a generator function to 
+    create frequency-domain ringdown waveforms with higher modes in the
+    radiation frame; i.e., with no detector response function applied.
+    For more details, see BaseGenerator.
+
+    Examples
+    --------
+    Initialize a generator:
+
+    >>> from pycbc.waveform.generator import FDomainFreqTauRingdownGenerator
+    >>> generator = FDomainFreqTauRingdownGenerator(variable_args=['f_220',
+                    'tau_220','f_210','tau_210','amp220','amp210','phi220','phi210'],
+                    lmns=['221','211'], delta_f=1./32, f_lower=30., f_final=500)
+
+    Create a ringdown with the variable arguments:
+
+    >>> generator.generate(f_220=317., tau_220=0.003, f_210=274., tau_210=0.003,
+                           amp220=1e-21, amp210=1./10, phi220=0., phi210=0.)
+        (<pycbc.types.frequencyseries.FrequencySeries at 0x51614d0>,
+         <pycbc.types.frequencyseries.FrequencySeries at 0x5161550>)
+
+    """
+    def __init__(self, variable_args=(), **frozen_params):
+        super(FDomainFreqTauRingdownGenerator, self).__init__(ringdown.get_fd_from_freqtau,
             variable_args=variable_args, **frozen_params)
 
 class FDomainDetFrameGenerator(object):
@@ -400,7 +411,8 @@ class FDomainDetFrameGenerator(object):
     --------
     Initialize a generator:
 
-    >>> generator = waveform.FDomainDetFrameGenerator(waveform.FDomainCBCGenerator, 0., variable_args=['mass1', 'mass2', 'spin1z', 'spin2z', 'tc', 'ra', 'dec', 'polarization'], detectors=['H1', 'L1'], delta_f=1./64, f_lower=20., approximant='SEOBNRv2_ROM_DoubleSpin')
+    >>> from pycbc.waveform.generator import FDomainDetFrameGenerator
+    >>> generator = FDomainDetFrameGenerator(waveform.FDomainCBCGenerator, 0., variable_args=['mass1', 'mass2', 'spin1z', 'spin2z', 'tc', 'ra', 'dec', 'polarization'], detectors=['H1', 'L1'], delta_f=1./64, f_lower=20., approximant='SEOBNRv2_ROM_DoubleSpin')
 
     Generate a waveform:
 
@@ -532,7 +544,8 @@ def select_waveform_generator(approximant):
     >>> ringdown.ringdown_fd_approximants.keys()
 
     Get generator object:
-    >>> waveform.select_waveform_generator(waveform.fd_approximants()[0])
+    >>> from pycbc.waveform.generator import select_waveform_generator
+    >>> select_waveform_generator(waveform.fd_approximants()[0])
     """
 
     # check if frequency-domain CBC waveform
@@ -545,10 +558,10 @@ def select_waveform_generator(approximant):
 
     # check if frequency-domain ringdown waveform
     elif approximant in ringdown.ringdown_fd_approximants:
-        if approximant == 'FdQNM':
-            return FDomainRingdownGenerator
-        elif approximant == 'FdQNMmultiModes':
-            return FDomainMultiModeRingdownGenerator
+        if approximant == 'FdQNMfromFinalMassSpin':
+            return FDomainMassSpinRingdownGenerator
+        elif approximant == 'FdQNMfromFreqTau':
+            return FDomainFreqTauRingdownGenerator
 
     # otherwise waveform approximant is not supported
     elif approximant in ringdown.ringdown_td_approximants:
