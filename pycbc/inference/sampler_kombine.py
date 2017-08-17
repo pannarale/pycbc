@@ -67,16 +67,22 @@ class KombineSampler(BaseMCMCSampler):
     name = "kombine"
 
     def __init__(self, likelihood_evaluator, nwalkers, transd=False,
-                 processes=None, min_burn_in=None, update_interval=None):
+                 min_burn_in=None, pool=None, likelihood_call=None,  
+                 update_interval=None):
+
         try:
             import kombine
         except ImportError:
             raise ImportError("kombine is not installed.")
 
+        if likelihood_call is None:
+            likelihood_call = likelihood_evaluator
+
         # construct sampler for use in KombineSampler
         ndim = len(likelihood_evaluator.waveform_generator.variable_args)
-        sampler = kombine.Sampler(nwalkers, ndim, likelihood_evaluator,
-                                  transd=transd, processes=processes)
+        sampler = kombine.Sampler(nwalkers, ndim, likelihood_call,
+                                  transd=transd, pool=pool,
+                                  processes=pool.count)
         # initialize
         super(KombineSampler, self).__init__(sampler, likelihood_evaluator,
                                              min_burn_in=min_burn_in)
@@ -84,7 +90,7 @@ class KombineSampler(BaseMCMCSampler):
         self.update_interval = update_interval
 
     @classmethod
-    def from_cli(cls, opts, likelihood_evaluator):
+    def from_cli(cls, opts, likelihood_evaluator, pool=None, likelihood_call=None):
         """Create an instance of this sampler from the given command-line
         options.
 
@@ -100,9 +106,8 @@ class KombineSampler(BaseMCMCSampler):
         KombineSampler
             A kombine sampler initialized based on the given arguments.
         """
-        return cls(likelihood_evaluator, opts.nwalkers,
-                   processes=opts.nprocesses, min_burn_in=opts.min_burn_in,
-                   update_interval=opts.update_interval)
+        return cls(likelihood_evaluator, opts.nwalkers, likelihood_call=likelihood_call,
+                   min_burn_in=opts.min_burn_in, pool=pool, update_interval=opts.update_interval)
 
     def run(self, niterations, **kwargs):
         """Advance the sampler for a number of samples.
@@ -219,3 +224,80 @@ class KombineSampler(BaseMCMCSampler):
             self._currentblob = self._sampler.blobs[-1]
         self.burn_in_iterations = self.niterations
         return p, post, q
+
+    def _write_kde(self, fp, dataset_name, kde):
+        """Writes the given kde to the file."""
+        shape = kde.data.shape
+        try:
+            if shape != fp[dataset_name].shape:
+                # resize the dataset
+                fp[dataset_name].resize(shape)
+            fp[dataset_name][:] = kde.data
+        except KeyError:
+            # dataset doesn't exist yet
+            fp.create_dataset(dataset_name, shape,
+                              maxshape=(self.nwalkers,
+                                        len(self.variable_args)),
+                              dtype=float)
+            fp[dataset_name][:] = kde.data
+
+    def write_state(self, fp):
+        """ Saves the state of the sampler in a file.
+
+        Parameters
+        ----------
+        fp : InferenceFile
+            File to store sampler state.
+        """
+
+        # save clustered KDE data
+        subgroup = "clustered_kde"
+        dataset_name ="/".join([fp.sampler_group, subgroup])
+        clustered_kde = self._sampler._kde
+        self._write_kde(fp, dataset_name, clustered_kde)
+        # metadata
+        fp[dataset_name].attrs["nclusters"] = clustered_kde.nclusters
+        fp[dataset_name].attrs["assignments"] = clustered_kde._assignments
+        fp[dataset_name].attrs["centroids"] = clustered_kde.centroids
+        fp[dataset_name].attrs["logweights"] = clustered_kde._logweights
+        fp[dataset_name].attrs["mean"] = clustered_kde._mean
+        fp[dataset_name].attrs["std"] = clustered_kde._std
+        # save individual KDE data
+        for i, kde in enumerate(clustered_kde._kdes):
+            dataset_name = "/".join([fp.sampler_group, "kde" + str(i)])
+            self._write_kde(fp, dataset_name, kde)
+
+    def set_state_from_file(self, fp):
+        """ Sets the state of the sampler back to the instance saved in a file.
+
+        Parameters
+        ----------
+        fp : InferenceFile
+            File with sampler state stored.
+        """
+
+        try:
+            import kombine
+        except ImportError:
+            raise ImportError("kombine is not installed.")
+
+        # create a ClusteredKDE
+        dataset_name = "/".join([fp.sampler_group, "clustered_kde"])
+        clustered_kde = kombine.clustered_kde.ClusteredKDE(
+                                           fp[dataset_name][:],
+                                           fp[dataset_name].attrs["nclusters"])
+        clustered_kde._assignments = fp[dataset_name].attrs["assignments"]
+        clustered_kde._centroids = fp[dataset_name].attrs["centroids"]
+        clustered_kde.logweights = fp[dataset_name].attrs["logweights"]
+        clustered_kde._mean = fp[dataset_name].attrs["mean"]
+        clustered_kde._std = fp[dataset_name].attrs["std"]
+
+        # add KDEs
+        clustered_kde._kdes = []
+        for i in range(clustered_kde.nclusters):
+            dataset_name = "/".join([fp.sampler_group, "kde" + str(i)])
+            clustered_kde._kdes.append(
+                                kombine.clustered_kde.KDE(fp[dataset_name][:]))
+
+        # overwrite ClusteredKDE in Sampler instance
+        self._sampler._kde = clustered_kde

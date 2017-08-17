@@ -33,11 +33,11 @@ from itertools import combinations, groupby, permutations
 from operator import attrgetter
 import lal as lalswig
 import Pegasus.DAX3
-from glue import lal, segments
-from glue.ligolw import table, lsctables, ligolw
-from glue.ligolw import utils as ligolw_utils
-from glue.ligolw.utils import segments as ligolw_segments
-from glue.ligolw.utils import process as ligolw_process
+from pycbc_glue import lal, segments
+from pycbc_glue.ligolw import table, lsctables, ligolw
+from pycbc_glue.ligolw import utils as ligolw_utils
+from pycbc_glue.ligolw.utils import segments as ligolw_segments
+from pycbc_glue.ligolw.utils import process as ligolw_process
 from pycbc.workflow.configuration import WorkflowConfigParser, resolve_url
 from pycbc.workflow import pegasus_workflow
 
@@ -67,8 +67,7 @@ def check_output_error_and_retcode(*popenargs, **kwargs):
     return output, error, retcode
 
 def check_output(*popenargs, **kwargs):
-    output, unused_error, unused_retcode = \
-                           check_output_error_and_retcode(*popenargs, **kwargs)
+    output, _, _ = check_output_error_and_retcode(*popenargs, **kwargs)
     return output
 
 ###############################################################################
@@ -638,11 +637,10 @@ class Workflow(pegasus_workflow.Workflow):
             fil.PFN(fil.storage_path, site='local')
     
     @staticmethod
-    def set_job_properties(job, output_map, staging_site=None):
+    def set_job_properties(job, output_map_file, staging_site=None):
         job.addArguments('-Dpegasus.dir.storage.mapper.replica.file=%s' % 
-                         os.path.basename(output_map))
-        job.uses(Pegasus.DAX3.File(os.path.basename(output_map)), 
-                 link=Pegasus.DAX3.Link.INPUT)
+                         os.path.basename(output_map_file.name))
+        job.uses(output_map_file, link=Pegasus.DAX3.Link.INPUT)
         job.addArguments('-Dpegasus.dir.storage.mapper.replica=File') 
 
         job.addArguments('--output-site local')     
@@ -658,17 +656,17 @@ class Workflow(pegasus_workflow.Workflow):
         if staging_site:
             job.addArguments('--staging-site %s' % staging_site)
             
-    def save(self, filename=None, output_map=None, staging_site=None):
-        if output_map is None:
-            output_map = self.output_map
-            if self.in_workflow is not False:
-                output_map_file = Pegasus.DAX3.File(os.path.basename(output_map))
-                output_map_file.addPFN(Pegasus.DAX3.PFN(output_map, 'local'))
-                self.in_workflow._adag.addFile(output_map_file)
+    def save(self, filename=None, output_map_path=None, staging_site=None):
+        if output_map_path is None:
+            output_map_path = self.output_map
+        output_map_file = Pegasus.DAX3.File(os.path.basename(output_map_path))
+        output_map_file.addPFN(Pegasus.DAX3.PFN(output_map_path, 'local'))
+        if self.in_workflow is not False:
+            self.in_workflow._adag.addFile(output_map_file)
 
         staging_site = self.staging_site
             
-        Workflow.set_job_properties(self.as_job, output_map, staging_site)
+        Workflow.set_job_properties(self.as_job, output_map_file, staging_site)
 
         # add executable pfns for local site to dax
         for exe in self._executables:
@@ -682,14 +680,41 @@ class Workflow(pegasus_workflow.Workflow):
         super(Workflow, self).save(filename=filename)
         
         # add workflow storage locations to the output mapper
-        f = open(output_map, 'w')
+        f = open(output_map_path, 'w')
         for out in self._outputs:
             try:
                 f.write(out.output_map_str() + '\n')
             except ValueError:
                 # There was no storage path
                 pass
-    
+
+    def save_config(self, fname, output_dir, cp=None):
+        """ Writes configuration file to disk and returns a pycbc.workflow.File
+        instance for the configuration file.
+
+        Parameters
+        -----------
+        fname : string
+            The filename of the configuration file written to disk.
+        output_dir : string
+            The directory where the file is written to disk.
+        cp : ConfigParser object
+            The ConfigParser object to write. If None then uses self.cp.
+
+        Returns
+        -------
+        FileList
+            The FileList object with the configuration file.
+        """
+        cp = self.cp if cp is None else cp
+        ini_file_path = os.path.join(output_dir, fname)
+        with open(ini_file_path, "wb") as fp:
+            cp.write(fp)
+        ini_file = FileList([File(self.ifos, "",
+                                  self.analysis_time,
+                                  file_url="file://" + ini_file_path)])
+        return ini_file
+
 class Node(pegasus_workflow.Node):
     def __init__(self, executable):
         super(Node, self).__init__(executable)
@@ -1359,10 +1384,8 @@ class FileList(list):
         
         # Sort the files
 
-        for ix, currFile in enumerate(self):
+        for currFile in self:
             segExtent = currFile.segment_list.extent()
-            segExtStart = float(segExtent[0])
-            segExtEnd = float(segExtent[1])
             startIdx = (segExtent[0] - startTime) / step
             endIdx = (segExtent[1] - startTime) / step
             # Add some small rounding here
@@ -1567,7 +1590,7 @@ class SegFile(File):
             ifo_list.sort()
         if valid_segment is None:
             if seg_summ_dict and \
-                    numpy.any([len(v) for k, v in seg_summ_dict.items()]):
+                    numpy.any([len(v) for _, v in seg_summ_dict.items()]):
                 # Only come here if seg_summ_dict is supplied and it is
                 # not empty.
                 valid_segment = seg_summ_dict.extent_all()
@@ -1608,9 +1631,9 @@ class SegFile(File):
         """
         # load xmldocument and SegmentDefTable and SegmentTables
         fp = open(xml_file, 'r')
-        xmldoc, digest = ligolw_utils.load_fileobj(fp,
-                                            gz=xml_file.endswith(".gz"),
-                                            contenthandler=ContentHandler)
+        xmldoc, _ = ligolw_utils.load_fileobj(fp,
+                                              gz=xml_file.endswith(".gz"),
+                                              contenthandler=ContentHandler)
 
         seg_def_table = table.get_table(xmldoc,
                                         lsctables.SegmentDefTable.tableName)

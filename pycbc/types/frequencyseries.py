@@ -115,6 +115,34 @@ class FrequencySeries(Array):
     sample_frequencies = property(get_sample_frequencies,
                                   doc="Array of the sample frequencies.")
 
+    def _getslice(self, index):
+        if index.step is not None:
+            new_delta_f = self._delta_f * index.step
+        else:
+            new_delta_f = self._delta_f
+        return FrequencySeries(Array._getslice(self, index),
+                               delta_f=new_delta_f,
+                               epoch=self._epoch,
+                               copy=False)
+    @property
+    def start_time(self):
+        """Return the start time of this vector
+        """
+        return self.epoch
+
+    @property
+    def duration(self):
+        """Return the time duration of this vector
+        """
+        return 1.0 / self.delta_f
+
+    @property
+    def sample_rate(self):
+        """Return the sample rate this would have in the time domain. This 
+        assumes even length time series!
+        """
+        return (len(self) - 1) * self.delta_f * 2.0
+
     def __eq__(self,other):
         """
         This is the Python special method invoked whenever the '=='
@@ -348,9 +376,11 @@ class FrequencySeries(Array):
                                         self.numpy().imag)).T
             _numpy.savetxt(path, output)
         elif ext == '.xml' or path.endswith('.xml.gz'):
-            from pylal import series as lalseries
-            from glue.ligolw import utils
-            assert(self.kind == 'real')
+            from pycbc.io.live import make_psd_xmldoc
+            from pycbc_glue.ligolw import utils
+
+            if self.kind != 'real':
+                raise ValueError('XML only supports real frequency series')
             output = self.lal()
             # When writing in this format we must *not* have the 0 values at
             # frequencies less than flow. To resolve this we set the first
@@ -360,7 +390,7 @@ class FrequencySeries(Array):
             if not first_idx == 0:
                 data_lal[:first_idx] = data_lal[first_idx]
             psddict = {ifo: output}
-            utils.write_filename(lalseries.make_psd_xmldoc(psddict), path,
+            utils.write_filename(make_psd_xmldoc(psddict), path,
                                  gz=path.endswith(".gz"))
         elif ext =='.hdf':
             key = 'data' if group is None else group
@@ -375,7 +405,9 @@ class FrequencySeries(Array):
 
     @_noreal
     def to_timeseries(self, delta_t=None):
-        """ Return the Fourier transform of this time series
+        """ Return the Fourier transform of this time series.
+
+        Note that this assumes even length time series!
         
         Parameters
         ----------
@@ -455,11 +487,12 @@ def load_frequencyseries(path, group=None):
     if data.ndim == 2:
         delta_f = (data[-1][0] - data[0][0]) / (len(data)-1)
         epoch = _lal.LIGOTimeGPS(data[0][0])
-        return FrequencySeries(data[:,1], delta_f=delta_f)
+        return FrequencySeries(data[:,1], delta_f=delta_f, epoch=epoch)
     elif data.ndim == 3:
         delta_f = (data[-1][0] - data[0][0]) / (len(data)-1)
         epoch = _lal.LIGOTimeGPS(data[0][0])
-        return FrequencySeries(data[:,1] + 1j*data[:,2], delta_f=delta_f)
+        return FrequencySeries(data[:,1] + 1j*data[:,2], delta_f=delta_f,
+                               epoch=epoch)
     else:
         raise ValueError('File has %s dimensions, cannot convert to Array, \
                           must be 2 (real) or 3 (complex)' % data.ndim)

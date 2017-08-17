@@ -25,7 +25,10 @@
 """Classes to define common parameters used for waveform generation.
 """
 
-from UserList import UserList
+try:
+    from collections import UserList
+except ImportError:
+    from UserList import UserList
 
 #
 # =============================================================================
@@ -205,11 +208,11 @@ mtotal = Parameter("mtotal",
 q = Parameter("q",
                 dtype=float, label=r"$q$",
                 description="The mass ratio, m1/m2, where m1 >= m2.")
-m_p = Parameter("m_p",
-                dtype=float, label=r"$m_{\mathrm{pr}}$",
+primary_mass = Parameter("primary_mass",
+                dtype=float, label=r"$m_{1}$",
                 description="Mass of the primary object (in solar masses).")
-m_s = Parameter("m_s",
-                dtype=float, label=r"$m_{\mathrm{sc}}$",
+secondary_mass = Parameter("secondary_mass",
+                dtype=float, label=r"$m_{2}$",
                 description="Mass of the secondary object (in solar masses).")
 
 # derived parameters for component spins
@@ -217,27 +220,27 @@ chi_eff = Parameter("chi_eff",
                 dtype=float, label=r"$\chi_\mathrm{eff}$",
                 description="Effective spin of the binary.")
 spin_px = Parameter("spin_px",
-                dtype=float, label=r"$\chi_{\mathrm{pr}\,x}$",
+                dtype=float, label=r"$\chi_{1x}$",
                 description="The x component of the dimensionless spin of the "
                             "primary object.")
 spin_py = Parameter("spin_py",
-                dtype=float, label=r"$\chi_{\mathrm{pr}\,y}$",
+                dtype=float, label=r"$\chi_{1y}$",
                 description="The y component of the dimensionless spin of the "
                             "primary object.")
 spin_pz = Parameter("spin_pz",
-                dtype=float, label=r"$\chi_{\mathrm{pr}\,z}$",
+                dtype=float, label=r"$\chi_{1z}$",
                 description="The z component of the dimensionless spin of the "
                             "primary object.")
 spin_sx = Parameter("spin_sx",
-                dtype=float, label=r"$\chi_{\mathrm{sc}\,x}$",
+                dtype=float, label=r"$\chi_{2x}$",
                 description="The x component of the dimensionless spin of the "
                             "secondary object.")
 spin_sy = Parameter("spin_sy",
-                dtype=float, label=r"$\chi_{\mathrm{sc}\,y}$",
+                dtype=float, label=r"$\chi_{2y}$",
                 description="The y component of the dimensionless spin of the "
                             "secondary object.")
 spin_sz = Parameter("spin_sz",
-                dtype=float, label=r"$\chi_{\mathrm{sc}\,z}$",
+                dtype=float, label=r"$\chi_{2z}$",
                 description="The z component of the dimensionless spin of the "
                             "secondary object.")
 lambda1 = Parameter("lambda1",
@@ -257,11 +260,11 @@ dquad_mon2 = Parameter("dquad_mon2",
 spin1_a = Parameter("spin1_a",
                     dtype=float, label=r"$a_{1}$",
                     description="The dimensionless spin magnitude "
-                                "$|\vec{s}/m_{1}^2|$.")
+                                r"$|\vec{s}/m_{1}^2|$.")
 spin2_a = Parameter("spin2_a",
                     dtype=float, label=r"$a_{2}$",
                     description="The dimensionless spin magnitude "
-                                "$|\vec{s}/m_{2}^2|$.")
+                                r"$|\vec{s}/m_{2}^2|$.")
 spin1_azimuthal = Parameter(
                       "spin1_azimuthal",
                       dtype=float, label=r"$\theta_1^\mathrm{azimuthal}$",
@@ -289,6 +292,10 @@ f_final = Parameter("f_final",
                 description="The ending frequency of the waveform. The "
                             "default (0) indicates that the choice is made by "
                             "the respective approximant.")
+f_final_func = Parameter("f_final_func",
+                dtype=str, default="", label=None,
+                description="Use the given frequency function to compute f_final "
+                            "based on the parameters of the waveform.")
 f_ref = Parameter("f_ref",
                 dtype=float, default=0, label=r"$f_{\mathrm{ref}}$ (Hz)",
                 description="The reference frequency.")
@@ -366,6 +373,9 @@ dec = Parameter("dec",
 polarization = Parameter("polarization",
                 dtype=float, default=None, label=r"$\psi$",
                 description="Polarization (rad).")
+redshift = Parameter("redshift",
+                dtype=float, default=None, label=r"$z$",
+                description="Redshift.")
 
 #
 #   Non mandatory flags with default values
@@ -427,7 +437,7 @@ common_gen_equal_sampled_params = ParameterList([f_lower]) + \
 
 # the following are parameters needed to generate an FD waveform
 fd_waveform_params = cbc_rframe_params + ParameterList([delta_f]) + \
-    common_gen_equal_sampled_params + ParameterList([f_final])
+    common_gen_equal_sampled_params + ParameterList([f_final, f_final_func])
 
 # the following are parameters needed to generate a TD waveform
 td_waveform_params = cbc_rframe_params + ParameterList([delta_t]) + \

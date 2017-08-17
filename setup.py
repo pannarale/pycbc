@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # Copyright (C) 2012 Alex Nitz, Andrew Miller, Josh Willis
 #
 # This program is free software; you can redistribute it and/or modify it
@@ -18,6 +18,9 @@
 """
 setup.py file for PyCBC package
 """
+
+from __future__ import print_function
+
 import os, fnmatch, sys, subprocess, shutil
 
 from trace import fullmodname
@@ -39,7 +42,7 @@ from distutils.version import LooseVersion
 try:
     import numpy.version
     if LooseVersion(numpy.version.version) < LooseVersion("1.6.4"):
-        print (" Numpy >= 1.6.4 is required for pycbc dependencies. \n"
+        print(" Numpy >= 1.6.4 is required for pycbc dependencies. \n"
               " We found version %s already installed. Please update \n"
               " to a more recent version and then retry PyCBC  \n"
               " installation. \n"
@@ -56,6 +59,7 @@ install_requires =  setup_requires + ['Mako>=1.0.1',
                       'argparse>=1.3.0',
                       'decorator>=3.4.2',
                       'scipy>=0.13.0',
+                      'weave>=0.16.0',
                       'unittest2',
                       'matplotlib>=1.3.1',
                       'numpy>=1.6.4',
@@ -64,8 +68,8 @@ install_requires =  setup_requires + ['Mako>=1.0.1',
                       'jinja2',
                       'mpld3>=0.3',
                       'pyRXP>=2.1.0',
-                      'pycbc-glue>=1.0.1',
-                      'kombine',
+                      'pycbc-glue-obsolete==1.1.0',
+                      'kombine==0.8.1',
                       'emcee>=2.2.0',
                       'corner>=2.0.1',
                       ]
@@ -106,13 +110,13 @@ class clean(_clean):
         for f in self.clean_files:
             try:
                 os.unlink(f)
-                print 'removed {0}'.format(f)
+                print('removed {0}'.format(f))
             except:
                 pass
 
         for fol in self.clean_folders:
             shutil.rmtree(fol, ignore_errors=True)
-            print 'removed {0}'.format(fol)
+            print('removed {0}'.format(fol))
 
 class install(_install):
     def run(self):
@@ -126,11 +130,12 @@ class install(_install):
                      "creating %s" % filename)
 
         env_file = open(filename, 'w')
-        print >> env_file, "# Source this file to access PyCBC"
-        print >> env_file, "PATH=" + self.install_scripts + ":$PATH"
-        print >> env_file, "PYTHONPATH=" + self.install_libbase + ":$PYTHONPATH"
-        print >> env_file, "export PYTHONPATH"
-        print >> env_file, "export PATH"
+        print("# Source this file to access PyCBC", file=env_file)
+        print("PATH=" + self.install_scripts + ":$PATH", file=env_file)
+        print("PYTHONPATH=" + self.install_libbase + ":$PYTHONPATH",
+              file=env_file)
+        print("export PYTHONPATH", file=env_file)
+        print("export PATH", file=env_file)
         env_file.close()
 
         _install.run(self)
@@ -176,8 +181,10 @@ class TestBase(Command):
 
         test_results.append("\n" + (self.scheme + " tests ").rjust(30))
         for test in self.test_modules:
-            test_command = 'python ' + 'test/' + test + '.py -s ' + self.scheme
-            a = subprocess.call(test_command,env=os.environ,shell=True)
+            test_command = [sys.executable,
+                            'test/' + test + '.py',
+                            '-s', self.scheme]
+            a = subprocess.call(test_command, env=os.environ)
             if a != 0:
                 result_str = str(test).ljust(30) + ": Fail : " + str(a)
             else:
@@ -185,7 +192,7 @@ class TestBase(Command):
             test_results.append(result_str)
 
         for test in test_results:
-            print test
+            print(test)
 
 class test(Command):
     def has_cuda(self):
@@ -261,8 +268,8 @@ def get_version_info():
 
     # If this is a release or another kind of source distribution of PyCBC
     except:
-        version = '1.6.8'
-        release = 'True'
+        version = '1.8.0dev'
+        release = 'False'
         date = hash = branch = tag = author = committer = status = builder = build_date = ''
 
         with open('pycbc/version.py', 'w') as f:
@@ -310,7 +317,8 @@ class build_gh_pages(Command):
     def finalize_options(self):
         pass
     def run(self):
-        subprocess.check_call("cd docs; cp Makefile.gh_pages Makefile; cp conf_std.py conf.py; sphinx-apidoc "
+        subprocess.check_call("mkdir -p _gh-pages/latest && touch _gh-pages/.nojekyll && "
+                              "cd docs; cp Makefile.gh_pages Makefile; cp conf_std.py conf.py; sphinx-apidoc "
                               " -o ./ -f -A 'PyCBC dev team' -V '0.1' ../pycbc && make html",
                             stderr=subprocess.STDOUT, shell=True)
 
@@ -331,12 +339,12 @@ VERSION = get_version_info()
 setup (
     name = 'PyCBC',
     version = VERSION,
-    description = 'Gravitational wave CBC analysis toolkit',
+    description = 'Analyze gravitational-wave data, find signals, and study their parameters.',
     author = 'Ligo Virgo Collaboration - PyCBC team',
     author_email = 'alex.nitz@ligo.org',
-    url = 'https://github.com/ligo-cbc/pycbc',
+    url = 'https://ligo-cbc.github.io',
     download_url = 'https://github.com/ligo-cbc/pycbc/tarball/v%s' % VERSION,
-    keywords = ['ligo', 'physics', 'gravity', 'signal processing'],
+    keywords = ['ligo', 'physics', 'gravity', 'signal processing', 'gravitational waves'],
     cmdclass = cmdclass,
     setup_requires = setup_requires,
     extras_require = extras_require,
@@ -365,16 +373,17 @@ setup (
                'bin/pycbc_splitbank',
                'bin/pycbc_hdf5_splitbank',
                'bin/pycbc_split_inspinj',
-               'bin/pycbc_geom_aligned_2dstack',
-               'bin/pycbc_geom_aligned_bank',
-               'bin/pycbc_geom_nonspinbank',
-               'bin/pycbc_aligned_bank_cat',
-               'bin/pycbc_aligned_stoch_bank',
+               'bin/bank/pycbc_brute_bank',
+               'bin/bank/pycbc_geom_aligned_2dstack',
+               'bin/bank/pycbc_geom_aligned_bank',
+               'bin/bank/pycbc_geom_nonspinbank',
+               'bin/bank/pycbc_aligned_bank_cat',
+               'bin/bank/pycbc_aligned_stoch_bank',
+               'bin/bank/pycbc_coinc_bank2hdf',
+               'bin/bank/pycbc_tmpltbank_to_chi_params',
+               'bin/bank/pycbc_bank_verification',
                'bin/pycbc_make_faithsim',
                'bin/pycbc_get_ffinal',
-               'bin/pycbc_tmpltbank_to_chi_params',
-               'bin/pycbc_bank_verification',
-               'bin/pycbc_run_sqlite',
                'bin/pycbc_inj_cut',
                'bin/pycbc_upload_xml_to_gracedb',
                'bin/pycbc_dark_vs_bright_injections',
@@ -386,7 +395,6 @@ setup (
                'bin/hdfcoinc/pycbc_average_psd',
                'bin/hdfcoinc/pycbc_coinc_mergetrigs',
                'bin/hdfcoinc/pycbc_coinc_findtrigs',
-               'bin/hdfcoinc/pycbc_coinc_bank2hdf',
                'bin/hdfcoinc/pycbc_coinc_statmap',
                'bin/hdfcoinc/pycbc_coinc_statmap_inj',
                'bin/hdfcoinc/pycbc_page_foreground',
@@ -434,13 +442,13 @@ setup (
                'bin/pygrb/pycbc_make_offline_grb_workflow',
                'bin/pygrb/pycbc_make_grb_summary_page',
                'bin/pycbc_condition_strain',
-               'bin/inference/pycbc_make_inference_workflow',
+               'bin/workflows/pycbc_make_inference_workflow',
                'bin/inference/pycbc_inference',
                'bin/inference/pycbc_inference_plot_acceptance_rate',
                'bin/inference/pycbc_inference_plot_acf',
                'bin/inference/pycbc_inference_plot_acl',
-               'bin/inference/pycbc_inference_plot_corner',
                'bin/inference/pycbc_inference_plot_geweke',
+               'bin/inference/pycbc_inference_plot_gelman_rubin',
                'bin/inference/pycbc_inference_plot_movie',
                'bin/inference/pycbc_inference_plot_posterior',
                'bin/inference/pycbc_inference_plot_prior',
@@ -462,6 +470,7 @@ setup (
                ],
     packages = [
                'pycbc',
+               'pycbc.distributions',
                'pycbc.fft',
                'pycbc.types',
                'pycbc.filter',
@@ -476,6 +485,7 @@ setup (
                'pycbc.io',
                'pycbc.inference',
                'pycbc.inject',
+               'pycbc.frame',
                ],
      package_data = {'pycbc.workflow': find_package_data('pycbc/workflow'),
 	             'pycbc.results': find_package_data('pycbc/results'),

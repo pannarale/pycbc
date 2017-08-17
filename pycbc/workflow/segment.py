@@ -31,8 +31,8 @@ import os, sys, shutil, stat, copy
 import logging
 import urllib2, urlparse
 import lal
-from glue import segments, segmentsUtils
-from glue.ligolw import utils, table, lsctables, ligolw
+from pycbc_glue import segments, segmentsUtils
+from pycbc_glue.ligolw import utils, table, lsctables, ligolw
 from pycbc.workflow.core import Executable, FileList, Node, SegFile, make_analysis_dir, make_external_call, File
 from pycbc.workflow.core import resolve_url
 from pycbc.workflow.jobsetup import LigolwAddExecutable, LigoLWCombineSegsExecutable
@@ -1040,7 +1040,6 @@ def get_triggered_coherent_segment(workflow, out_dir, sciencesegs,
     # Load parsed workflow config options
     cp = workflow.cp
     triggertime = int(os.path.basename(cp.get('workflow', 'trigger-time')))
-    triggername = cp.get('workflow', 'trigger-name')
     minbefore = int(os.path.basename(cp.get('workflow-exttrig_segments',
                                             'min-before')))
     minafter = int(os.path.basename(cp.get('workflow-exttrig_segments',
@@ -1213,11 +1212,11 @@ def get_triggered_coherent_segment(workflow, out_dir, sciencesegs,
         offsource[iifo] = offsrc
 
     # Write off-source to xml file
-    coherent_seg = segments.segmentlistdict()
-    coherent_seg[ifos + ':COH_OFFSOURCE'] = offsrc
-    currFile = SegFile.from_segment_list_dict('COH_OFFSOURCE_SEGMENT',
-                      coherent_seg, ifo_list=ifos, extension="xml",
-                      directory=out_dir)
+    #coherent_seg = segments.segmentlistdict()
+    #coherent_seg[ifos + ':COH_OFFSOURCE'] = offsrc
+    #currFile = SegFile.from_segment_list_dict('COH_OFFSOURCE_SEGMENT',
+    #                  coherent_seg, ifo_list=ifos, extension="xml",
+    #                  directory=out_dir)
     logging.info("Optimal coherent segment calculated.")
 
     offsourceSegfile = os.path.join(out_dir, "offSourceSeg.txt")
@@ -1259,7 +1258,6 @@ def get_triggered_single_ifo_segment(workflow, out_dir, sciencesegs):
     # Load parsed workflow config options
     cp = workflow.cp
     triggertime = int(os.path.basename(cp.get('workflow', 'trigger-time')))
-    triggername = cp.get('workflow', 'trigger-name')
     minbefore = int(os.path.basename(cp.get('workflow-exttrig_segments',
                                             'min-before')))
     minafter = int(os.path.basename(cp.get('workflow-exttrig_segments',
@@ -1416,10 +1414,6 @@ def get_triggered_single_ifo_segment(workflow, out_dir, sciencesegs):
     offsource[ifo] = offsrc
 
     # Write off-source to xml file
-    single_seg = segments.segmentlistdict()
-    single_seg[ifo + ':SINGLE_IFO_OFFSOURCE'] = offsrc
-    currFile = SegFile.from_segment_list_dict('SINGLE_IFO_OFFSOURCE_SEGMENT',
-            single_seg, ifo_list=ifo, extension="xml", directory=out_dir)
     logging.info("Optimal single IFO segment calculated for %s." % ifo)
 
     offsourceSegfile = os.path.join(out_dir, "offSourceSeg.txt")

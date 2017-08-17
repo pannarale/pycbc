@@ -27,7 +27,8 @@ inference samplers generate.
 
 import h5py
 import numpy
-from pycbc import pnutils
+from pycbc import DYN_RANGE_FAC
+from pycbc.types import FrequencySeries
 from pycbc.waveform import parameters as wfparams
 import pycbc.inference.sampler
 import pycbc.inference.likelihood
@@ -46,6 +47,7 @@ class InferenceFile(h5py.File):
     """
     samples_group = 'samples'
     stats_group = 'likelihood_stats'
+    sampler_group = 'sampler_states'
 
     def __init__(self, path, mode=None, **kwargs):
         super(InferenceFile, self).__init__(path, mode, **kwargs)
@@ -78,6 +80,17 @@ class InferenceFile(h5py.File):
         """
         return dict([[arg, self.attrs[arg]]
             for arg in self.attrs["static_args"]])
+
+    @property
+    def sampling_args(self):
+        """Returns the parameters that were used to sample.
+
+        Returns
+        -------
+        sampling_args : {list, str}
+            List of the sampling args.
+        """
+        return self.attrs["sampling_args"]
 
     @property
     def lognl(self):
@@ -146,7 +159,7 @@ class InferenceFile(h5py.File):
         """
         return self.attrs["log_evidence"], self.attrs["dlog_evidence"]
 
-    def read_samples(self, parameters, **kwargs):
+    def read_samples(self, parameters, samples_group=None, **kwargs):
         """Reads samples from the file.
 
         Parameters
@@ -154,22 +167,27 @@ class InferenceFile(h5py.File):
         parameters : (list of) strings
             The parameter(s) to retrieve. A parameter can be the name of any
             field in `samples_group`, a virtual field or method of
-            `WaveformArray` (as long as the file contains the necessary fields
+            `FieldArray` (as long as the file contains the necessary fields
             to derive the virtual field or method), and/or a function of
             these.
+        samples_group : str
+            Group in HDF InferenceFile that parameters belong to.
         \**kwargs :
             The rest of the keyword args are passed to the sampler's
             `read_samples` method.
 
         Returns
         -------
-        WaveformArray
+        FieldArray
             Samples for the given parameters, as an instance of a
-            WaveformArray.
+            FieldArray.
         """
         # get the appropriate sampler class
+        samples_group = samples_group if samples_group \
+                             else InferenceFile.samples_group
         sclass = pycbc.inference.sampler.samplers[self.sampler_name]
-        return sclass.read_samples(self, parameters, **kwargs)
+        return sclass.read_samples(self, parameters,
+                                   samples_group=samples_group, **kwargs)
 
     def read_likelihood_stats(self, **kwargs):
         """Reads likelihood stats from self.
@@ -187,9 +205,9 @@ class InferenceFile(h5py.File):
             array are the names of the stats that are in the `likelihood_stats`
             group.
         """
-        # get the appropriate sampler class
-        sclass = pycbc.inference.sampler.samplers[self.sampler_name]
-        return sclass.read_likelihood_stats(self, **kwargs)
+        parameters = self[self.stats_group].keys()
+        return self.read_samples(
+                          parameters, samples_group=self.stats_group, **kwargs)
 
     def read_acceptance_fraction(self, **kwargs):
         """Returns the acceptance fraction that was written to the file.
@@ -253,35 +271,72 @@ class InferenceFile(h5py.File):
                 return parameter
         return label
 
-    def write_strain(self, strain_dict):
+    def read_random_state(self, group=None):
+        """ Reads the state of the random number generator from the file.
+
+        Parameters
+        ----------
+        group : str
+            Name of group to read random state from.
+
+        Returns
+        -------
+        tuple
+            A tuple with 5 elements that can be passed to numpy.set_state.
+        """
+        group = self.sampler_group if group is None else group
+        dataset_name = "/".join([group, "random_state"])
+        arr = self[dataset_name][:]
+        s = self[dataset_name].attrs["s"]
+        pos = self[dataset_name].attrs["pos"]
+        has_gauss = self[dataset_name].attrs["has_gauss"]
+        cached_gauss = self[dataset_name].attrs["cached_gauss"]
+        return s, arr, pos, has_gauss, cached_gauss
+
+    def write_strain(self, strain_dict, group=None):
         """Writes strain for each IFO to file.
 
         Parameters
         -----------
         strain : {dict, FrequencySeries}
             A dict of FrequencySeries where the key is the IFO.
+        group : {None, str}
+            The group to write the strain to. If None, will write to the top
+            level.
         """
-        group = "{ifo}/strain"
+        subgroup = "{ifo}/strain"
+        if group is None:
+            group = subgroup 
+        else:
+            group = '/'.join([group, subgroup])
         for ifo,strain in strain_dict.items():
             self[group.format(ifo=ifo)] = strain
             self[group.format(ifo=ifo)].attrs['delta_t'] = strain.delta_t
-            self[group.format(ifo=ifo)].attrs['start_time'] = float(strain.start_time)
+            self[group.format(ifo=ifo)].attrs['start_time'] = \
+                float(strain.start_time)
 
-    def write_stilde(self, stilde_dict):
+    def write_stilde(self, stilde_dict, group=None):
         """Writes stilde for each IFO to file.
 
         Parameters
         -----------
         stilde : {dict, FrequencySeries}
             A dict of FrequencySeries where the key is the IFO.
+        group : {None, str}
+            The group to write the strain to. If None, will write to the top
+            level.
         """
-        group = "{ifo}/stilde"
+        subgroup = "{ifo}/stilde"
+        if group is None:
+            group = subgroup 
+        else:
+            group = '/'.join([group, subgroup])
         for ifo,stilde in stilde_dict.items():
             self[group.format(ifo=ifo)] = stilde
             self[group.format(ifo=ifo)].attrs['delta_f'] = stilde.delta_f
             self[group.format(ifo=ifo)].attrs['epoch'] = float(stilde.epoch)
 
-    def write_psd(self, psds, low_frequency_cutoff):
+    def write_psd(self, psds, low_frequency_cutoff, group=None):
         """Writes PSD for each IFO to file.
 
         Parameters
@@ -291,12 +346,63 @@ class InferenceFile(h5py.File):
         low_frequency_cutoff : {dict, float}
             A dict of the low-frequency cutoff where the key is the IFO. The
             minimum value will be stored as an attr in the File.
+        group : {None, str}
+            The group to write the strain to. If None, will write to the top
+            level.
         """
+        subgroup = "{ifo}/psds/0"
+        if group is None:
+            group = subgroup 
+        else:
+            group = '/'.join([group, subgroup])
         self.attrs["low_frequency_cutoff"] = min(low_frequency_cutoff.values())
-        for key in psds.keys():
-            psd_dim = self.create_dataset(key+"/psds/0",
-                                          data=psds[key])
-            psd_dim.attrs["delta_f"] = psds[key].delta_f
+        for ifo in psds:
+            self[group.format(ifo=ifo)] = psds[ifo]
+            self[group.format(ifo=ifo)].attrs['delta_f'] = psds[ifo].delta_f
+
+    def write_data(self, strain_dict=None, stilde_dict=None,
+                   psd_dict=None, low_frequency_cutoff_dict=None,
+                   group=None):
+        """Writes the strain/stilde/psd.
+
+        Parameters
+        ----------
+        strain_dict : {None, dict}
+            A dictionary of strains. If None, no strain will be written.
+        stilde_dict : {None, dict}
+            A dictionary of stilde. If None, no stilde will be written.
+        psd_dict : {None, dict}
+            A dictionary of psds. If None, psds will be written.
+        low_freuency_cutoff_dict : {None, dict}
+            A dictionary of low frequency cutoffs used for each detector in
+            `psd_dict`; must be provided if `psd_dict` is not None.
+        group : {None, str}
+            The group to write the strain to. If None, will write to the top
+            level.
+        """
+        # save PSD
+        if psd_dict is not None:
+            if low_frequency_cutoff_dict is None:
+                raise ValueError("must provide low_frequency_cutoff_dict if "
+                                 "saving psds to output")
+            # apply dynamic range factor for saving PSDs since
+            # plotting code expects it
+            psd_dyn_dict = {}
+            for key,val in psd_dict.iteritems():
+                 psd_dyn_dict[key] = FrequencySeries(val*DYN_RANGE_FAC**2,
+                                                     delta_f=val.delta_f)
+            self.write_psd(psds=psd_dyn_dict,
+                           low_frequency_cutoff=low_frequency_cutoff_dict,
+                           group=group)
+
+        # save stilde
+        if stilde_dict is not None:
+            self.write_stilde(stilde_dict, group=group)
+
+        # save strain if desired
+        if strain_dict is not None:
+            self.write_strain(strain_dict, group=group)
+
 
     def write_command_line(self):
         """Writes command line to attributes.
@@ -307,6 +413,26 @@ class InferenceFile(h5py.File):
             The parsed command line instance.
         """
         self.attrs["cmd"] = " ".join(sys.argv)
+
+    def write_random_state(self, group=None):
+        """ Writes the state of the random number generator from the file.
+
+        Parameters
+        ----------
+        group : str
+            Name of group to read random state to.
+        """
+        group = self.sampler_group if group is None else group
+        dataset_name = "/".join([group, "random_state"])
+        s, arr, pos, has_gauss, cached_gauss = numpy.random.get_state()
+        if group in self:
+            self[dataset_name][:] = arr
+        else:
+            self[dataset_name] = arr
+        self[dataset_name].attrs["s"] = s
+        self[dataset_name].attrs["pos"] = pos
+        self[dataset_name].attrs["has_gauss"] = has_gauss
+        self[dataset_name].attrs["cached_gauss"] = cached_gauss
 
     def get_slice(self, thin_start=None, thin_interval=None, thin_end=None):
         """Formats a slice using the given arguments that can be used to

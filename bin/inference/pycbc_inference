@@ -25,6 +25,8 @@ import numpy
 import pycbc
 import pycbc.opt
 import pycbc.weave
+from pycbc import distributions
+from pycbc import transforms
 from pycbc import fft
 from pycbc import gate
 from pycbc import inference
@@ -34,18 +36,7 @@ from pycbc import strain
 from pycbc import types
 from pycbc.io.inference_hdf import InferenceFile
 from pycbc.waveform import generator
-from pycbc.workflow import WorkflowConfigParser
 from pycbc.inference import option_utils
-
-def convert_liststring_to_list(lstring):
-    """ Checks if an argument of the configuration file is a string of a list
-    and returns the corresponding list (of strings)
-    """
-    if lstring[0]=='[' and lstring[-1]==']':
-        lvalue = [str(lstring[1:-1].split(',')[n].strip().strip("'"))
-                      for n in range(len(lstring[1:-1].split(',')))]
-    return lvalue
-
 
 # command line usage
 parser = argparse.ArgumentParser(usage=__file__ + " [--options]",
@@ -54,8 +45,7 @@ parser = argparse.ArgumentParser(usage=__file__ + " [--options]",
 # add data options
 parser.add_argument("--instruments", type=str, nargs="+", required=True,
                     help="IFOs, eg. H1 L1.")
-parser.add_argument("--low-frequency-cutoff", type=float, required=True,
-                    help="Low frequency cutoff for each IFO.")
+option_utils.add_low_frequency_cutoff_opt(parser)
 parser.add_argument("--psd-start-time", type=float, default=None,
                     help="Start time to use for PSD estimation if different "
                          "from analysis.")
@@ -70,18 +60,19 @@ parser.add_argument("--likelihood-evaluator", required=True,
 parser.add_argument("--seed", type=int, default=0,
                     help="Seed to use for the random number generator that "
                          "initially distributes the walkers. Default is 0.")
+parser.add_argument("--samples-file", default=None,
+                    help="Use an iteration from an InferenceFile as the "
+                         "initial proposal distribution. The same "
+                         "number of walkers and the same [variable_args] "
+                         "section in the configuration file should be used. "
+                         "The priors must allow encompass the initial "
+                         "positions from the InferenceFile being read.")
 
 # add sampler options
 option_utils.add_sampler_option_group(parser)
 
 # add config options
-parser.add_argument("--config-files", type=str, nargs="+", required=True,
-                    help="A file parsable by "
-                         "pycbc.workflow.WorkflowConfigParser.")
-parser.add_argument("--config-overrides", type=str, nargs="+", default=None,
-                    metavar="SECTION:OPTION:VALUE",
-                    help="List of section:option:value combinations to add "
-                         "into the configuration file.")
+option_utils.add_config_opts_to_parser(parser)
 
 # output options
 parser.add_argument("--output-file", type=str, required=True,
@@ -105,7 +96,7 @@ parser.add_argument("--checkpoint-interval", type=int, default=None,
 parser.add_argument("--checkpoint-fast", action="store_true",
                     help="Do not calculate derived data (eg. ACL or evidence) "
                          "after each checkpoint. Calculate them at the end.")
- 
+
 # verbose option
 parser.add_argument("--verbose", action="store_true", default=False,
                     help="Print logging messages.")
@@ -135,148 +126,47 @@ if os.path.exists(opts.output_file) and not opts.force:
     raise OSError("output-file already exists; use --force if you wish to "
                   "overwrite it.")
 
-# create the file for adding to
-fp = InferenceFile(opts.output_file, "w")
-fp.close()
-
 # setup log
 pycbc.init_logging(opts.verbose)
 
-# set the seed
+# set seed
 numpy.random.seed(opts.seed)
-logging.info("Using seed %i" %(opts.seed))
+logging.info("Using seed %i", opts.seed)
 
 # get scheme
 ctx = scheme.from_cli(opts)
 fft.from_cli(opts)
 
-# get gates to apply
-gates = gate.gates_from_cli(opts)
-psd_gates = gate.psd_gates_from_cli(opts)
-
-# get strain time series
-strain_dict = strain.from_cli_multi_ifos(opts, opts.instruments,
-                                         precision="double")
-# apply gates if not waiting to overwhiten
-if not opts.gate_overwhitened:
-    logging.info("Applying gates to strain data")
-    strain_dict = gate.apply_gates_to_td(strain_dict, gates)
-
-# get strain time series to use for PSD estimation
-# if user has not given the PSD time options then use same data as analysis
-if opts.psd_start_time and opts.psd_end_time:
-    logging.info("Will generate a different time series for PSD estimation")
-    psd_opts = opts
-    psd_opts.gps_start_time = psd_opts.psd_start_time
-    psd_opts.gps_end_time = psd_opts.psd_end_time
-    psd_strain_dict = strain.from_cli_multi_ifos(psd_opts, opts.instruments,
-                                                precision="double")
-    # apply any gates
-    logging.info("Applying gates to PSD data")
-    psd_strain_dict = gate.apply_gates_to_td(psd_strain_dict, psd_gates)
-
-elif opts.psd_start_time or opts.psd_end_time:
-    raise ValueError("Must give --psd-start-time and --psd-end-time")
-else:
-    psd_strain_dict = strain_dict
+# get the data and psd
+logging.info("Loading data")
+strain_dict, stilde_dict, psd_dict = option_utils.data_from_cli(opts)
+low_frequency_cutoff_dict = option_utils.low_frequency_cutoff_from_cli(opts)
 
 with ctx:
 
-    # FFT strain and save each of the length of the FFT, delta_f, and
-    # low frequency cutoff to a dict
-    logging.info("FFT strain")
-    stilde_dict = {}
-    length_dict = {}
-    delta_f_dict = {}
-    low_frequency_cutoff_dict = {}
-    for ifo in opts.instruments:
-        stilde_dict[ifo] = strain_dict[ifo].to_frequencyseries()
-        length_dict[ifo] = len(stilde_dict[ifo])
-        delta_f_dict[ifo] = stilde_dict[ifo].delta_f
-        low_frequency_cutoff_dict[ifo] = opts.low_frequency_cutoff
-
-    # get PSD as frequency series
-    psd_dict = psd.from_cli_multi_ifos(opts, length_dict, delta_f_dict,
-                               low_frequency_cutoff_dict, opts.instruments,
-                               strain_dict=psd_strain_dict, precision="double")
-
-    # apply any gates to overwhitened data, if desired
-    if opts.gate_overwhitened and opts.gate is not None:
-        logging.info("Applying gates to overwhitened data")
-
-        # overwhiten the data
-        for ifo in gates:
-            stilde_dict[ifo] /= psd_dict[ifo]
-        stilde_dict = gate.apply_gates_to_fd(stilde_dict, gates)
-
-        # unwhiten the data for the likelihood generator
-        for ifo in gates:
-            stilde_dict[ifo] *= psd_dict[ifo]
-
-    # save command line
-    with InferenceFile(opts.output_file, "a") as fp:
-        fp.write_command_line()
-
-    # save PSD
-    if opts.save_psd:
-
-        # apply dynamic range factor for saving PSDs since
-        # plotting code expects it
-        logging.info("Saving PSDs")
-        psd_dyn_dict = {}
-        for key,val in psd_dict.iteritems():
-             psd_dyn_dict[key] = types.FrequencySeries(
-                                        psd_dict[key] * pycbc.DYN_RANGE_FAC**2,
-                                        delta_f=psd_dict[key].delta_f)
-        with InferenceFile(opts.output_file, "a") as fp:
-            fp.write_psd(psds=psd_dyn_dict,
-                         low_frequency_cutoff=low_frequency_cutoff_dict)
-
-    # save stilde
-    if opts.save_stilde:
-        with InferenceFile(opts.output_file, "a") as fp:
-            fp.write_stilde(stilde_dict)
-
-    # save strain if desired
-    if opts.save_strain:
-        with InferenceFile(opts.output_file, "a") as fp:
-            fp.write_strain(strain_dict)
-
     # read configuration file
-    logging.info("Reading configuration file")
-    if opts.config_overrides is not None:
-        overrides = [override.split(":") for override in opts.config_overrides]
-    else:
-        overrides = None
-    cp = WorkflowConfigParser(opts.config_files, overrides)
+    cp = option_utils.config_parser_from_cli(opts)
 
-    # sanity check that each parameter in [variable_args] has a priors section
-    variable_args = cp.options("variable_args")
-    subsections = cp.get_subsections("prior")
-    tags = numpy.concatenate([tag.split("+") for tag in subsections])
-    if not any(param in tags for param in variable_args):
-        raise KeyError("You are missing a priors section in the config file.")
-
-    # get parameters that do not change in sampler
-    static_args = dict([(key,cp.get_opt_tags("static_args",key,[])) \
-                                         for key in cp.options("static_args")])
-    for key,val in static_args.iteritems():
-        try:
-            static_args[key] = float(val)
-            continue
-        except:
-            pass
-        try:
-            static_args[key] = convert_liststring_to_list(val) 
-        except:
-            pass
+    # get the vairable and static arguments from the config file
+    variable_args, static_args = option_utils.read_args_from_config(cp)
 
     # get prior distribution for each variable parameter
     logging.info("Setting up priors for each parameter")
-    distributions = inference.read_distributions_from_config(cp, "prior")
+    dists = distributions.read_distributions_from_config(cp, "prior")
 
     # construct class that will return the prior
-    prior = inference.PriorEvaluator(variable_args, *distributions)
+    prior = inference.PriorEvaluator(variable_args, *dists)
+
+    # get sampling transformations
+    if cp.has_section('sampling_parameters'):
+        sampling_parameters, replace_parameters = \
+            option_utils.read_sampling_args_from_config(cp)
+        sampling_transforms = transforms.read_transforms_from_config(cp,
+            'sampling_transforms')
+        logging.info("Sampling in {} in place of {}".format(
+            ', '.join(sampling_parameters), ', '.join(replace_parameters)))
+    else:
+        sampling_parameters = replace_parameters = sampling_transforms = None
 
     # select generator that will generate waveform for a single IFO
     # for likelihood evaluator
@@ -284,37 +174,55 @@ with ctx:
     generator_function = generator.select_waveform_generator(
                                                     static_args["approximant"])
 
-    # construct instance that will call single IFO waveform generator
-    # and apply the antenna pattern and timing offsets
-    generator = generator.FDomainDetFrameGenerator(
-                        generator_function,
-                        epoch=stilde_dict.values()[0].epoch,
-                        variable_args=variable_args,
-                        detectors=opts.instruments,
-                        delta_f=delta_f_dict.values()[0], **static_args)
+    # construct class that will generate waveforms
+    generated_waveform = generator.FDomainDetFrameGenerator(
+                       generator_function, epoch=stilde_dict.values()[0].epoch,
+                       variable_args=variable_args, detectors=opts.instruments,
+                       delta_f=stilde_dict.values()[0].delta_f,
+                       delta_t=strain_dict.values()[0].delta_t,
+                       **static_args)
 
     # construct class that will return the natural logarithm of likelihood
     likelihood = inference.likelihood_evaluators[opts.likelihood_evaluator](
-                        generator, stilde_dict, opts.low_frequency_cutoff,
-                        psds=psd_dict, prior=prior)
+                        generated_waveform, stilde_dict,
+                        low_frequency_cutoff_dict.values()[0],
+                        psds=psd_dict, prior=prior,
+                        sampling_parameters=sampling_parameters,
+                        replace_parameters=replace_parameters,
+                        sampling_transforms=sampling_transforms)
 
     # create sampler that will run
     sampler = option_utils.sampler_from_cli(opts, likelihood)
 
-    # get distribution to draw from for each walker initial position
+    # save command line and data, if desired
+    with InferenceFile(opts.output_file, "w") as fp:
+        logging.info("Writing command line and data to output file")
+        fp.write_command_line()
+        fp.write_data(strain_dict=strain_dict if opts.save_strain else None,
+                      stilde_dict=stilde_dict if opts.save_stilde else None,
+                      psd_dict=psd_dict if opts.save_psd else None,
+                      low_frequency_cutoff_dict=low_frequency_cutoff_dict)
+
+    # set the walkers initial positions from a pre-existing InferenceFile
+    # or a specific initial distribution listed in the configuration file
+    # or else use the prior distributions to set initial positions
     logging.info("Setting walkers initial conditions for varying parameters")
-
-    # check if user wants to use different distributions than prior for setting
-    # walkers initial positions
-    if len(cp.get_subsections("initial")):
-        initial_distributions = inference.read_distributions_from_config(cp,
-            section="initial")
+    if opts.samples_file:
+        with InferenceFile(opts.samples_file, "r") as fp:
+            iteration = fp.niterations - 1
+            logging.info("Initial positions taken from iteration %i in %s",
+                         iteration, opts.samples_file)
+            p0 = fp.read_samples(sampler.variable_args, iteration=iteration)
+        initial = None
+    elif len(cp.get_subsections("initial")):
+        initial_dists = distributions.read_distributions_from_config(
+                                                         cp, section="initial")
+        initial = inference.PriorEvaluator(variable_args, *initial_dists)
+        p0 = None
     else:
-        initial_distributions = inference.read_distributions_from_config(cp,
-            section="prior")
-
-    # set the initial positions
-    sampler.set_p0(initial_distributions)
+        initial = None
+        p0 = None
+    sampler.set_p0(prior=initial, samples=p0)
 
     # setup checkpointing
     if opts.checkpoint_interval:
@@ -326,7 +234,7 @@ with ctx:
         # determine if there is a small bit at the end
         remainder = opts.niterations % opts.checkpoint_interval
         if remainder:
-            intervals += [intervals[-1]+remainder]
+            intervals += [intervals[-1] + remainder]
         else:
             intervals += [opts.niterations]
 
@@ -336,15 +244,16 @@ with ctx:
 
     intervals = numpy.array(intervals)
 
-    # check if user wants to skip the burn in
+    # check if user wants to burn in
     if not opts.skip_burn_in:
         logging.info("Burn in")
         sampler.burn_in()
         n_burnin = sampler.burn_in_iterations
-        logging.info("Used %i burn in samples" % n_burnin)
+        logging.info("Used %i burn in samples", n_burnin)
         with InferenceFile(opts.output_file, "a") as fp:
             # write the burn in results
-            sampler.write_results(fp, max_iterations=opts.niterations+n_burnin)
+            sampler.write_results(fp,
+                                  max_iterations=opts.niterations + n_burnin)
     else:
         n_burnin = 0
 
@@ -352,16 +261,23 @@ with ctx:
     # increase the intervals to account for the burn in
     intervals += n_burnin
 
-    # loop over number of checkpoints
-    for i,start in enumerate(intervals[:-1]):
+    # if getting samples from file then put sampler and random number generator
+    # back in its former state
+    if opts.samples_file:
+        with InferenceFile(opts.samples_file, "r") as fp:
+            sampler.set_state_from_file(fp)
+            numpy.random.set_state(fp.read_random_state())
 
-        end = intervals[i+1]
+    # loop over number of checkpoints
+    for i, start in enumerate(intervals[:-1]):
+
+        end = intervals[i + 1]
 
         # run sampler and set initial values to None so that sampler
         # picks up from where it left off next call
-        logging.info("Running sampler for %i to %i out of %i iterations"%(
-            start-n_burnin, end-n_burnin, opts.niterations))
-        sampler.run(end-start)
+        logging.info("Running sampler for %i to %i out of %i iterations",
+                     start - n_burnin, end - n_burnin, opts.niterations)
+        sampler.run(end - start)
 
         # write new samples
         with InferenceFile(opts.output_file, "a") as fp:
@@ -369,7 +285,17 @@ with ctx:
             logging.info("Writing results to file")
             sampler.write_results(fp, start_iteration=start,
                                   end_iteration=end,
-                                  max_iterations=opts.niterations+n_burnin)
+                                  max_iterations=opts.niterations + n_burnin)
+            logging.info("Writing state to file")
+            fp.write_random_state()
+
+            # include a try-except statement because all samples might not
+            # have this implemented
+            try:
+                sampler.write_state(fp)
+            except NotImplementedError:
+                logging.warn("Writing state is not implemented for %s",
+                             sampler.name)
 
             if not opts.checkpoint_fast or end == opts.niterations:
 

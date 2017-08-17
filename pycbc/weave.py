@@ -15,13 +15,16 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 """
-This module provides methods for controlling scipy.weave
+This module provides methods for controlling weave
 """
+from __future__ import absolute_import
 import os.path, sys
 import logging
 import shutil, atexit, signal
 import fcntl
-import pycbc
+import weave.inline_tools as inline_tools
+
+_compile_function = inline_tools.compile_function
 
 ## Blatently taken from weave to implement a crude file locking scheme
 def pycbc_compile_function(code,arg_names,local_dict,global_dict,
@@ -36,7 +39,6 @@ def pycbc_compile_function(code,arg_names,local_dict,global_dict,
                      **kw):
     """ Dummy wrapper around scipy weave compile to implement file locking
     """
-    from scipy.weave.inline_tools import _compile_function
     headers = [] if headers is None else headers
     lockfile_dir = os.environ['PYTHONCOMPILED']
     lockfile_name = os.path.join(lockfile_dir, 'code_lockfile')
@@ -59,6 +61,7 @@ def pycbc_compile_function(code,arg_names,local_dict,global_dict,
 
     return func
 
+inline_tools.compile_function = pycbc_compile_function
 
 def insert_weave_option_group(parser):
     """
@@ -70,13 +73,13 @@ def insert_weave_option_group(parser):
         OptionParser instance
     """
     optimization_group = parser.add_argument_group("Options for controlling "
-                                   "scipy.weave")
+                                   "weave")
     
     optimization_group.add_argument("--per-process-weave-cache",
                     action="store_true",
                     default=False,
                     help="""If given, each process will use a separate directory
-                         for scipy.weave compilation.  This is slower, but safer if
+                         for weave compilation.  This is slower, but safer if
                          several instances may be starting on the same machine at
                          the same time.""")
 
@@ -123,7 +126,7 @@ def verify_weave_options(opt, parser):
     # PYTHONCOMPILED is initially set in pycbc.__init__
     cache_dir = os.environ['PYTHONCOMPILED']
 
-    # Check whether to use a fixed directory for scipy.weave
+    # Check whether to use a fixed directory for weave
     if opt.fixed_weave_cache:
         if os.environ.get("FIXED_WEAVE_CACHE", None):
             cache_dir = os.environ["FIXED_WEAVE_CACHE"]
@@ -139,7 +142,7 @@ def verify_weave_options(opt, parser):
         if not os.environ.get("LAL_DATA_PATH", None):
             os.environ['LAL_DATA_PATH'] = cache_dir
 
-    # Check whether to use a private directory for scipy.weave
+    # Check whether to use a private directory for weave
     if opt.per_process_weave_cache:
         cache_dir = os.path.join(cache_dir, str(os.getpid()))
         os.environ['PYTHONCOMPILED'] = cache_dir

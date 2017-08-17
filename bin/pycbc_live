@@ -1,8 +1,9 @@
 #!/usr/bin/env python
-import argparse, numpy, numpy.random, pycbc, logging, cProfile, h5py, lal
-from pycbc import fft, version, waveform, types, filter as pfilter, scheme, psd as pypsd, noise, vetoes, strain, frame
-from pycbc.types import MultiDetOptionAction, zeros
+import argparse, numpy, pycbc, logging, cProfile, h5py, lal
+from pycbc import fft, version, waveform, scheme, frame
+from pycbc.types import MultiDetOptionAction
 from pycbc.filter import LiveBatchMatchedFilter
+from pycbc.strain import StrainBuffer
 from time import time
 import os.path
 from mpi4py import MPI as mpi
@@ -86,8 +87,8 @@ class LiveEventManager(object):
                     bank=bank, upload_snr_series=args.upload_snr_series,
                     followup_ifos=followup_ifos)
 
-            time = int(coinc_results['foreground/%s/end_time' % ifos[0]])
-            fname = os.path.join(self.path, 'coinc-%s.xml' % time)
+            end_time = int(coinc_results['foreground/%s/end_time' % ifos[0]])
+            fname = os.path.join(self.path, 'coinc-%s.xml' % end_time)
 
             comments = ['using ranking statistic: %s' % args.background_statistic]
 
@@ -255,6 +256,10 @@ parser.add_argument('--upload-snr-series', action='store_true', default=False)
 parser.add_argument('--followup-detectors', default=[], nargs='*',
                     help='List of detectors to use as followup')
 parser.add_argument('--enable-single-detector-background', action='store_true', default=False)
+parser.add_argument('--round-start-time', type=int,
+                    help="Round up the start time to the nearest multiple of X"
+                         " seconds. This is useful for forcing agreement "
+                         " with frame file production.")
 
 scheme.insert_processing_option_group(parser)
 LiveSingleFarThreshold.insert_args(parser)
@@ -270,6 +275,10 @@ ctx = scheme.from_cli(args)
 
 sr = args.sample_rate
 flow = args.low_frequency_cutoff
+
+if args.round_start_time:
+    args.start_time = int(args.start_time / args.round_start_time + 1) * args.round_start_time 
+    logging.info('Starting from: %s', args.start_time)
 
 # Approximant guess of the total padding
 valid_pad = args.analysis_chunk
@@ -333,7 +342,7 @@ with ctx:
         if args.enable_single_detector_background and evnt.rank == 0:
             sngl_estimator[ifo] = LiveSingleFarThreshold.from_cli(args, ifo)
 
-        data_reader[ifo] = pycbc.strain.StrainBuffer(frame_src, 
+        data_reader[ifo] = StrainBuffer(frame_src,
                             '%s:%s' % (ifo, args.channel_name[ifo]),
                             args.start_time, max_buffer=maxlen * 2,
                             state_channel=state,
@@ -356,7 +365,8 @@ with ctx:
                             force_update_cache=args.force_update_cache,
                             increment_update_cache=args.increment_update_cache[ifo],
                             analyze_flags=args.analyze_flags,
-                            data_quality_flags=args.data_quality_flags)
+                            data_quality_flags=args.data_quality_flags,
+                            dq_padding=args.data_quality_padding)
     if args.enable_background_estimation and evnt.rank == 0:
         estimator = LiveCoincTimeslideBackgroundEstimator.from_cli(args,
                             len(bank), args.analysis_chunk, ifos)
@@ -420,8 +430,9 @@ with ctx:
                     start = data_reader[ifo].start_time
                     end = data_reader[ifo].end_time
                     times = results[ifo]['end_time']
-                    idx = data_reader[ifo].dq.indices_of_flag(start, valid_pad, times,
-                                                              padding=args.data_quality_padding)
+                    idx = data_reader[ifo].dq.indices_of_flag(
+                            start, valid_pad, times,
+                            padding=data_reader[ifo].dq_padding)
                     logging.info('Keeping %s triggers out of %s triggers in %s', len(idx), len(times), ifo)
                     for key in results[ifo]:
                         if len(results[ifo][key]) > 0:

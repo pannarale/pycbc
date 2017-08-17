@@ -24,6 +24,7 @@
 #
 """This module contains convenience utilities for manipulating waveforms
 """
+from __future__ import absolute_import
 from pycbc.types import TimeSeries, FrequencySeries, Array, float32, float64, complex_same_precision_as, real_same_precision_as
 import lal
 import lalsimulation as sim
@@ -32,7 +33,7 @@ import numpy
 import copy
 from pycbc.opt import omp_libs, omp_flags
 from pycbc import WEAVE_FLAGS
-from scipy.weave import inline
+from weave import inline
 
 def ceilpow2(n):
     """convenience function to determine a power-of-2 upper frequency limit"""
@@ -337,14 +338,14 @@ def apply_fseries_time_shift(htilde, dt, kmin=0, copy=True):
     be sampled at equal frequency intervals.
     """
     out = numpy.array(htilde.data, copy=copy)
-    phi = -2 * numpy.pi * dt * htilde.delta_f
-    kmax = len(htilde)
+    phi = -2 * numpy.pi * dt * htilde.delta_f # pylint:disable=unused-variable
+    kmax = len(htilde) # pylint:disable=unused-variable
     if htilde.precision == 'single':
         code = _apply_shift_code32
     else:
         code = _apply_shift_code
     inline(code, ['out', 'phi', 'kmin', 'kmax'],
-           extra_compile_args=[WEAVE_FLAGS + '-march=native -O3 -w']+omp_flags,
+           extra_compile_args=[WEAVE_FLAGS]+omp_flags,
            libraries=omp_libs)
     if copy:
         htilde = FrequencySeries(out, delta_f=htilde.delta_f, epoch=htilde.epoch,

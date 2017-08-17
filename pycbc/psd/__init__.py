@@ -15,7 +15,7 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 import copy
-from glue import segments
+from pycbc_glue import segments
 from pycbc.psd.read import *
 from pycbc.psd.analytical import *
 from pycbc.psd.estimate import *
@@ -344,7 +344,7 @@ def generate_overlapping_psds(opt, gwstrain, flen, delta_f, flow,
 
     Returns
     --------
-    psd_and_times : list of (start, end, psd) tuples
+    psd_and_times : list of (start, end, PSD) tuples
         This is a list of tuples containing one entry for each PSD. The first
         and second entries (start, end) in each tuple represent the index
         range of the gwstrain data that was used to estimate that PSD. The

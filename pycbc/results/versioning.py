@@ -22,7 +22,7 @@ import subprocess
 from pycbc.results import save_fig_with_metadata, html_escape
 
 import lal, lalframe, lalmetaio, lalinspiral, lalsimulation
-import glue.git_version, pycbc.version
+import pycbc_glue.git_version, pycbc.version
 
 def get_library_version_info():
     """This will return a list of dictionaries containing versioning
@@ -117,16 +117,16 @@ def get_library_version_info():
     library_list.append(lalsimulationinfo)
 
     glueinfo = {}
-    glueinfo['Name'] = 'Glue'
-    glueinfo['ID'] = glue.git_version.id
-    glueinfo['Status'] = glue.git_version.status
-    glueinfo['Version'] = glue.git_version.version
-    glueinfo['Tag'] = glue.git_version.tag
-    glueinfo['Author'] = glue.git_version.author
-    glueinfo['Builder'] = glue.git_version.builder
-    glueinfo['Branch'] = glue.git_version.branch
-    glueinfo['Committer'] = glue.git_version.committer
-    glueinfo['Date'] = glue.git_version.date
+    glueinfo['Name'] = 'PyCBC-Glue'
+    glueinfo['ID'] = pycbc_glue.git_version.id
+    glueinfo['Status'] = pycbc_glue.git_version.status
+    glueinfo['Version'] = pycbc_glue.git_version.version
+    glueinfo['Tag'] = pycbc_glue.git_version.tag
+    glueinfo['Author'] = pycbc_glue.git_version.author
+    glueinfo['Builder'] = pycbc_glue.git_version.builder
+    glueinfo['Branch'] = pycbc_glue.git_version.branch
+    glueinfo['Committer'] = pycbc_glue.git_version.committer
+    glueinfo['Date'] = pycbc_glue.git_version.date
     library_list.append(glueinfo)
 
     pycbcinfo = {}
@@ -169,8 +169,8 @@ def get_code_version_numbers(cp):
         version string for each executable.
     """
     code_version_dict = {}
-    for item, value in cp.items('executables'):
-        path, exe_name = os.path.split(value)
+    for _, value in cp.items('executables'):
+        _, exe_name = os.path.split(value)
         version_string = None
         if value.startswith('gsiftp://') or value.startswith('http://'):
            code_version_dict[exe_name] = "Using bundle downloaded from %s" % value

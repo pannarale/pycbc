@@ -21,10 +21,11 @@
 #
 # =============================================================================
 #
+from __future__ import absolute_import
 import numpy
 from pycbc.opt import omp_libs, omp_flags
 from pycbc import WEAVE_FLAGS
-from scipy.weave import inline
+from weave import inline
 from .simd_correlate import default_segsize, corr_parallel_code, corr_support
 from .matchedfilter import _BaseCorrelator
 
@@ -47,13 +48,13 @@ batch_correlator_code = """
 """
 
 def batch_correlate_execute(self, y):
-    num_vectors = self.num_vectors
-    size = self.size
-    x = numpy.array(self.x.data, copy=False)
-    z = numpy.array(self.z.data, copy=False)
+    num_vectors = self.num_vectors # pylint:disable=unused-variable
+    size = self.size # pylint:disable=unused-variable
+    x = numpy.array(self.x.data, copy=False) # pylint:disable=unused-variable
+    z = numpy.array(self.z.data, copy=False) # pylint:disable=unused-variable
     y = numpy.array(y.data, copy=False)        
     inline(batch_correlator_code, ['x', 'y', 'z', 'size', 'num_vectors'],
-                extra_compile_args=[WEAVE_FLAGS + '-march=native -O3 -w'] + omp_flags,
+                extra_compile_args=[WEAVE_FLAGS] + omp_flags,
                 libraries=omp_libs)
 
 support = """
@@ -89,12 +90,12 @@ def correlate_batch_inline(x, y, z):
     else:
         the_code = double_codeb
         
-    za = numpy.array(z.ptr, copy=False)
-    xa = numpy.array(x.ptr, copy=False)
-    ya = numpy.array(y.ptr, copy=False)
-    N = len(x) 
+    za = numpy.array(z.ptr, copy=False) # pylint:disable=unused-variable
+    xa = numpy.array(x.ptr, copy=False) # pylint:disable=unused-variable
+    ya = numpy.array(y.ptr, copy=False) # pylint:disable=unused-variable
+    N = len(x)  # pylint:disable=unused-variable
     inline(the_code, ['xa', 'ya', 'za', 'N'], 
-                    extra_compile_args=[WEAVE_FLAGS + '-march=native -O3 -w'] + omp_flags,
+                    extra_compile_args=[WEAVE_FLAGS] + omp_flags,
                     support_code = support,
                     libraries=omp_libs
           )
@@ -123,10 +124,10 @@ def correlate_inline(x, y, z):
     else:
         the_code = double_code
         
-    za = numpy.array(z.data, copy=False)
-    xa = numpy.array(x.data, copy=False)
-    ya = numpy.array(y.data, copy=False)
-    N = len(x) 
+    za = numpy.array(z.data, copy=False) # pylint:disable=unused-variable
+    xa = numpy.array(x.data, copy=False) # pylint:disable=unused-variable
+    ya = numpy.array(y.data, copy=False) # pylint:disable=unused-variable
+    N = len(x)  # pylint:disable=unused-variable
     inline(the_code, ['xa', 'ya', 'za', 'N'], 
                     extra_compile_args=[WEAVE_FLAGS] + omp_flags,
                     support_code = support,
@@ -147,11 +148,11 @@ class CPUCorrelator(_BaseCorrelator):
         self.segsize = default_segsize
 
     def correlate(self):
-        htilde = self.x
-        stilde = self.y
-        qtilde = self.z
-        arrlen = self.arrlen
-        segsize = self.segsize
+        htilde = self.x # pylint:disable=unused-variable
+        stilde = self.y # pylint:disable=unused-variable
+        qtilde = self.z # pylint:disable=unused-variable
+        arrlen = self.arrlen # pylint:disable=unused-variable
+        segsize = self.segsize # pylint:disable=unused-variable
         inline(self.code, ['htilde', 'stilde', 'qtilde', 'arrlen', 'segsize'],
                extra_compile_args = [WEAVE_FLAGS] + omp_flags,
                #extra_compile_args = ['-mno-avx -mno-sse2 -mno-sse3 -mno-ssse3 -mno-sse4 -mno-sse4.1 -mno-sse4.2 -mno-sse4a -O2 -w'] + omp_flags,

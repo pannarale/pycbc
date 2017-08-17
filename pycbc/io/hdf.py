@@ -9,12 +9,12 @@ import inspect
 
 from lal import LIGOTimeGPS, YRJUL_SI
 
-from glue.ligolw import ligolw
-from glue.ligolw import table
-from glue.ligolw import lsctables
-from glue.ligolw import ilwd
-from glue.ligolw import utils as ligolw_utils
-from glue.ligolw.utils import process as ligolw_process
+from pycbc_glue.ligolw import ligolw
+from pycbc_glue.ligolw import table
+from pycbc_glue.ligolw import lsctables
+from pycbc_glue.ligolw import ilwd
+from pycbc_glue.ligolw import utils as ligolw_utils
+from pycbc_glue.ligolw.utils import process as ligolw_process
 
 from pycbc import version as pycbc_version
 from pycbc.tmpltbank import return_search_summary
@@ -352,7 +352,7 @@ class SingleDetTriggers(object):
             # giving the surviving triggers 
             logging.info('%i triggers before vetoes',
                           len(self.trigs['end_time'][:]))
-            self.veto_mask, segs = events.veto.indices_outside_segments(
+            self.veto_mask, _ = events.veto.indices_outside_segments(
                 self.trigs['end_time'][:], [veto_file],
                 ifo=detector, segment_name=segment_name)
             logging.info('%i triggers remain after vetoes',
@@ -494,18 +494,23 @@ class SingleDetTriggers(object):
         return np.array(self.bank['inclination'])[self.template_id]
 
     @property
+    def f_lower(self):
+        self.checkbank('f_lower')
+        return np.array(self.bank['f_lower'])[self.template_id]
+
+    @property
     def mtotal(self):
         return self.mass1 + self.mass2
 
     @property
     def mchirp(self):
-        mchirp, eta = pnutils.mass1_mass2_to_mchirp_eta(
+        mchirp, _ = pnutils.mass1_mass2_to_mchirp_eta(
             self.mass1, self.mass2)
         return mchirp
 
     @property
     def eta(self):
-        mchirp, eta = pnutils.mass1_mass2_to_mchirp_eta(
+        _, eta = pnutils.mass1_mass2_to_mchirp_eta(
             self.mass1, self.mass2)
         return eta
 
@@ -709,9 +714,8 @@ class ForegroundTriggers(object):
         for name in sngl_col_names:
             sngl_col_vals[name] = self.get_snglfile_array_dict(name)
 
-        for idx, coinc_idx in enumerate(self.sort_arr):
+        for idx in xrange(len(self.sort_arr)):
             # Set up IDs and mapping values
-            curr_tmplt_id = self.template_id[idx]
             coinc_id = lsctables.CoincID(idx)
 
             # Set up sngls
@@ -724,7 +728,6 @@ class ForegroundTriggers(object):
                 sngl = return_empty_sngl()
                 sngl.event_id = event_id
                 sngl.ifo = ifo
-                curr_sngl_file = self.sngl_files[ifo].h5file[ifo]
                 for name in sngl_col_names:
                     val = sngl_col_vals[name][ifo][idx]
                     if name == 'end_time':
@@ -736,7 +739,7 @@ class ForegroundTriggers(object):
                     setattr(sngl, name, val)
                 sngl.mtotal, sngl.eta = pnutils.mass1_mass2_to_mtotal_eta(
                         sngl.mass1, sngl.mass2)
-                sngl.mchirp, junk = pnutils.mass1_mass2_to_mchirp_eta(
+                sngl.mchirp, _ = pnutils.mass1_mass2_to_mchirp_eta(
                         sngl.mass1, sngl.mass2)
                 sngl.eff_distance = (sngl.sigmasq)**0.5 / sngl.snr
                 sngl_combined_mchirp += sngl.mchirp
@@ -799,7 +802,6 @@ def get_chisq_from_file_choice(hdfile, chisq_choice):
         trad_chisq = f['chisq'][:]
         # We now need to handle the case where chisq is not actually calculated
         # 0 is used as a sentinel value
-        l = trad_chisq == 0
         trad_chisq_dof = f['chisq_dof'][:]
         trad_chisq /= (trad_chisq_dof * 2 - 2)
     if chisq_choice in ['cont', 'max_cont_trad', 'max_bank_cont',
@@ -832,3 +834,4 @@ def get_chisq_from_file_choice(hdfile, chisq_choice):
         err_msg="Do not recognized --chisq-choice %s" % chisq_choice
         raise ValueError(err_msg)
     return chisq
+
