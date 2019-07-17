@@ -26,227 +26,433 @@ This modules provides classes and functions for determining when Markov Chains
 have burned in.
 """
 
-import numpy
+from __future__ import division
 
-def max_posterior(sampler, fp):
+import numpy
+from scipy.stats import ks_2samp
+
+from pycbc.io.record import get_vars_from_arg
+
+# The value to use for a burn-in iteration if a chain is not burned in
+NOT_BURNED_IN_ITER = -1
+
+
+#
+# =============================================================================
+#
+#                              Convenience functions
+#
+# =============================================================================
+#
+
+
+def ks_test(samples1, samples2, threshold=0.9):
+    """Applies a KS test to determine if two sets of samples are the same.
+
+    The ks test is applied parameter-by-parameter. If the two-tailed p-value
+    returned by the test is greater than ``threshold``, the samples are
+    considered to be the same.
+
+    Parameters
+    ----------
+    samples1 : dict
+        Dictionary of mapping parameters to the first set of samples.
+    samples2 : dict
+        Dictionary of mapping parameters to the second set of samples.
+    threshold : float
+        The thershold to use for the p-value. Default is 0.9.
+
+    Returns
+    -------
+    dict :
+        Dictionary mapping parameter names to booleans indicating whether the
+        given parameter passes the KS test.
+    """
+    is_the_same = {}
+    assert set(samples1.keys()) == set(samples2.keys()), (
+        "samples1 and 2 must have the same parameters")
+    # iterate over the parameters
+    for param in samples1:
+        s1 = samples1[param]
+        s2 = samples2[param]
+        _, p_value = ks_2samp(s1, s2)
+        is_the_same[param] = p_value > threshold
+    return is_the_same
+
+
+def max_posterior(lnps_per_walker, dim):
     """Burn in based on samples being within dim/2 of maximum posterior.
 
     Parameters
     ----------
-    sampler : pycbc.inference.sampler
-        Sampler to determine burn in for. May be either an instance of a
-        `inference.sampler`, or the class itself.
-    fp : InferenceFile
-        Open inference hdf file containing the samples to load for determing
-        burn in.
+    lnps_per_walker : 2D array
+        Array of values that are proportional to the log posterior values. Must
+        have shape ``nwalkers x niterations``.
+    dim : int
+        The dimension of the parameter space.
 
     Returns
     -------
-    array :
-        Array of indices giving the burn-in index for each chain.
+    burn_in_idx : array of int
+        The burn in indices of each walker. If a walker is not burned in, its
+        index will be be equal to the length of the chain.
+    is_burned_in : array of bool
+        Whether or not a walker is burned in.
     """
-    # get the posteriors
-    # Note: multi-tempered samplers should just return the coldest chain by
-    # default
-    chain_stats = sampler.read_samples(fp, ['loglr', 'prior'],
-        samples_group=fp.stats_group, thin_interval=1, thin_start=0,
-        thin_end=None, flatten=False)
-    chain_posteriors = chain_stats['loglr'] + chain_stats['prior']
-    dim = len(fp.variable_args)
-    # find the posterior to compare against
-    max_p = chain_posteriors.max()
-    criteria = max_p - dim/2
-    nwalkers = chain_posteriors.shape[-2]
-    niterations = chain_posteriors.shape[-1]
-    burn_in_idx = numpy.repeat(niterations, nwalkers).astype(int)
-    # find the first iteration in each chain where the logplr has exceeded
+    if len(lnps_per_walker.shape) != 2:
+        raise ValueError("lnps_per_walker must have shape "
+                         "nwalkers x niterations")
+    # find the value to compare against
+    max_p = lnps_per_walker.max()
+    criteria = max_p - dim/2.
+    nwalkers, _ = lnps_per_walker.shape
+    burn_in_idx = numpy.empty(nwalkers, dtype=int)
+    is_burned_in = numpy.empty(nwalkers, dtype=bool)
+    # find the first iteration in each chain where the logpost has exceeded
     # max_p - dim/2
     for ii in range(nwalkers):
-        chain = chain_posteriors[...,ii,:]
-        # numpy.where will return a tuple with multiple arrays if the chain is
-        # more than 1D (which can happen for multi-tempered samplers). Always
-        # taking the last array ensures we are looking at the indices that
-        # count out iterations
-        idx = numpy.where(chain >= criteria)[-1]
-        if idx.size != 0:
-            burn_in_idx[ii] = idx[0]
-    return burn_in_idx
+        chain = lnps_per_walker[ii, :]
+        passedidx = numpy.where(chain >= criteria)[0]
+        is_burned_in[ii] = passedidx.size > 0
+        if is_burned_in[ii]:
+            burn_in_idx[ii] = passedidx[0]
+        else:
+            burn_in_idx[ii] = NOT_BURNED_IN_ITER
+    return burn_in_idx, is_burned_in
 
 
-def posterior_step(sampler, fp):
-    """Burn in based on the last time a chain made a jump > dim/2.
+def posterior_step(logposts, dim):
+    """Finds the last time a chain made a jump > dim/2.
 
     Parameters
     ----------
-    sampler : pycbc.inference.sampler
-        Sampler to determine burn in for. May be either an instance of a
-        `inference.sampler`, or the class itself.
-    fp : InferenceFile
-        Open inference hdf file containing the samples to load for determing
-        burn in.
+    logposts : array
+        1D array of values that are proportional to the log posterior values.
+    dim : int
+        The dimension of the parameter space.
 
     Returns
     -------
-    array :
-        Array of indices giving the burn-in index for each chain.
+    int
+        The index of the last time the logpost made a jump > dim/2. If that
+        never happened, returns 0.
     """
-    # get the posteriors
-    # Note: multi-tempered samplers should just return the coldest chain by
-    # default
-    chain_stats = sampler.read_samples(fp, ['loglr', 'prior'],
-        samples_group=fp.stats_group, thin_interval=1, thin_start=0,
-        thin_end=None, flatten=False)
-    chain_posteriors = chain_stats['loglr'] + chain_stats['prior']
-    nwalkers = chain_posteriors.shape[-2]
-    dim = len(fp.variable_args)
-    burn_in_idx = numpy.zeros(nwalkers).astype(int)
+    if logposts.ndim > 1:
+        raise ValueError("logposts must be a 1D array")
     criteria = dim/2.
-    # find the last iteration in each chain where the logplr has
-    # jumped by more than dim/2
-    for ii in range(nwalkers):
-        chain = chain_posteriors[...,ii,:]
-        dp = abs(numpy.diff(chain))
-        idx = numpy.where(dp >= criteria)[-1]
-        if idx.size != 0:
-            burn_in_idx[ii] = idx[-1] + 1
-    return burn_in_idx
+    dp = numpy.diff(logposts)
+    indices = numpy.where(dp >= criteria)[0]
+    if indices.size > 0:
+        idx = indices[-1] + 1
+    else:
+        idx = 0
+    return idx
 
 
-def half_chain(sampler, fp):
-    """Takes the second half of the iterations as post-burn in.
-
-    Parameters
-    ----------
-    sampler : pycbc.inference.sampler
-        Sampler to determine burn in for. May be either an instance of a
-        `inference.sampler`, or the class itself.
-    fp : InferenceFile
-        Open inference hdf file containing the samples to load for determing
-        burn in.
-
-    Returns
-    -------
-    array :
-        Array of indices giving the burn-in index for each chain.
-    """ 
-    nwalkers = sampler.nwalkers
-    niterations = fp.niterations
-    return numpy.repeat(niterations/2, nwalkers).astype(int)
+#
+# =============================================================================
+#
+#                              Burn in classes
+#
+# =============================================================================
+#
 
 
-def use_sampler(sampler, fp=None):
-    """Uses the sampler's burn_in function.
+class MCMCBurnInTests(object):
+    """Provides methods for estimating burn-in of an ensemble MCMC."""
 
-    Parameters
-    ----------
-    sampler : pycbc.inference.sampler
-        Sampler to determine burn in for. Must be an instance of an
-        `inference.sampler` that has a `burn_in` function.
-    fp : InferenceFile, optional
-        This option is not used; it is just here give consistent API as the
-        other burn in functions.
+    available_tests = ('halfchain', 'min_iterations', 'max_posterior',
+                       'posterior_step', 'nacl', 'ks_test',
+                       )
 
-    Returns
-    -------
-    array :
-        Array of indices giving the burn-in index for each chain.
-    """
-    sampler.burn_in()
-    return sampler.burn_in_iterations
+    def __init__(self, sampler, burn_in_test, **kwargs):
+        self.sampler = sampler
+        # determine the burn-in tests that are going to be done
+        self.do_tests = get_vars_from_arg(burn_in_test)
+        self.burn_in_test = burn_in_test
+        self.burn_in_data = {t: {} for t in self.do_tests}
+        self.is_burned_in = False
+        self.burn_in_iteration = NOT_BURNED_IN_ITER
+        self.burn_in_index = NOT_BURNED_IN_ITER
+        # Arguments specific to each test...
+        # for nacl:
+        self._nacls = int(kwargs.pop('nacls', 5))
+        # for kstest:
+        self._ksthreshold = float(kwargs.pop('ks_threshold', 0.9))
+        # for max_posterior and posterior_step
+        self._ndim = int(kwargs.pop('ndim', len(sampler.variable_params)))
+        # for min iterations
+        self._min_iterations = int(kwargs.pop('min_iterations', 0))
 
+    def _getniters(self, filename):
+        """Convenience function to get the number of iterations in the file.
 
-burn_in_functions = {
-    'max_posterior': max_posterior,
-    'posterior_step': posterior_step,
-    'half_chain': half_chain,
-    'use_sampler': use_sampler,
-    }
+        If `niterations` hasn't been written to the file yet, just returns 0.
+        """
+        with self.sampler.io(filename, 'r') as fp:
+            try:
+                niters = fp.niterations
+            except KeyError:
+                niters = 0
+        return niters
 
-class BurnIn(object):
-    """Class to estimate the number of burn in iterations.
+    def _getnsamples(self, filename):
+        """Convenience function to get the number of samples saved in the file.
 
-    Parameters
-    ----------
-    function_names : list, optional
-        List of name of burn in functions to use. All names in the provided
-        list muset be in the `burn_in_functions` dict. If none provided, will
-        use no burn-in functions.
-    min_iterations : int, optional
-        Minimum number of burn in iterations to use. The burn in iterations
-        returned by evaluate will be the maximum of this value
-        and the values returned by the burn in functions provided in
-        `function_names`. Default is 0.
+        If no samples have been written to the file yet, just returns 0.
+        """
+        with self.sampler.io(filename, 'r') as fp:
+            try:
+                group = fp[fp.samples_group]
+                # we'll just use the first parameter
+                params = list(group.keys())
+                nsamples = group[params[0]].shape[-1]
+            except (KeyError, IndexError):
+                nsamples = 0
+        return nsamples
 
-    Examples
-    --------
-    Initialize a `BurnIn` instance that will use `max_posterior` and
-    `posterior_step` as the burn in criteria:
+    def _index2iter(self, filename, index):
+        """Converts the index in some samples at which burn in occurs to the
+        iteration of the sampler that corresponds to.
+        """
+        with self.sampler.io(filename, 'r') as fp:
+            thin_interval = fp.thinned_by
+        return index * thin_interval
 
-    >>> from pycbc import inference
-    >>> burn_in = inference.BurnIn(['max_posterior', 'posterior_step'])
+    def _iter2index(self, filename, iteration):
+        """Converts an iteration to the index it corresponds to.
+        """
+        with self.sampler.io(filename, 'r') as fp:
+            thin_interval = fp.thinned_by
+        return iteration // thin_interval
 
-    Use this `BurnIn` instance to find the burn-in iteration of each walker
-    in an inference result file:
-
-    >>> from pycbc.io import InferenceFile
-    >>> fp = InferenceFile('inference.hdf', 'r')
-    >>> burn_in.evaluate(inference.samplers[fp.sampler_name], fp)
-    array([11486, 11983, 11894, ..., 11793, 11888, 11981])
-
-    """
-
-    def __init__(self, function_names, min_iterations=0):
-        if function_names is None:
-            function_names = []
-        self.min_iterations = min_iterations
-        self.burn_in_functions = {fname: burn_in_functions[fname]
-                                  for fname in function_names}
-
-    def evaluate(self, sampler, fp):
-        """Evaluates sampler's chains to find burn in.
+    def _getlogposts(self, filename):
+        """Convenience function for retrieving log posteriors.
 
         Parameters
         ----------
-        sampler : pycbc.inference.sampler
-            Sampler to determine burn in for. May be either an instance of a
-            `inference.sampler`, or the class itself.
-        fp : InferenceFile
-            Open inference hdf file containing the samples to load for
-            determing burn in.
+        filename : str
+            The file to read.
 
         Returns
         -------
-        array :
-            Array of indices giving the burn-in index for each chain.
+        array
+            The log posterior values. They are not flattened, so have dimension
+            nwalkers x niterations.
         """
-        # if the file already has burn in iterations saved, use those as a
-        # base
-        try:
-            burnidx = fp['burn_in_iterations'][:]
-        except KeyError:
-            # just use the minimum
-            burnidx = numpy.repeat(self.min_iterations, fp.nwalkers)
-        if self.burn_in_functions != {}:
-            newidx = numpy.vstack([func(sampler, fp)
-                for func in self.burn_in_functions.values()]).max(axis=0)
-            mask = burnidx < newidx
-            burnidx[mask] = newidx[mask]
-        burnidx[burnidx < self.min_iterations] = self.min_iterations
-        return burnidx
+        with self.sampler.io(filename, 'r') as fp:
+            samples = fp.read_raw_samples(
+                ['loglikelihood', 'logprior'], thin_start=0, thin_interval=1,
+                flatten=False)
+            logposts = samples['loglikelihood'] + samples['logprior']
+        return logposts
 
-    def update(self, sampler, fp):
-        """Evaluates burn in and saves the updated indices to the given file.
+    def _getacls(self, filename, start_index):
+        """Convenience function for calculating acls for the given filename.
 
-        Parameters
-        ----------
-        sampler : pycbc.inference.sampler
-            Sampler to determine burn in for. May be either an instance of a
-            `inference.sampler`, or the class itself.
-        fp : InferenceFile
-            Open inference hdf file containing the samples to load for
-            determing burn in.
+        Since we calculate the acls, this will also store it to the sampler.
         """
-        burnidx = self.evaluate(sampler, fp)
-        sampler.burn_in_iterations = burnidx
-        sampler.write_burn_in_iterations(fp, burnidx)
+        acls = self.sampler.compute_acl(filename, start_index=start_index)
+        # since we calculated it, save the acls to the sampler...
+        # but only do this if this is the only burn in test
+        if len(self.do_tests) == 1:
+            self.sampler.acls = acls
+        return acls
 
+    def halfchain(self, filename):
+        """Just uses half the chain as the burn-in iteration.
+        """
+        niters = self._getniters(filename)
+        data = self.burn_in_data['halfchain']
+        # this test cannot determine when something will burn in
+        # only when it was not burned in in the past
+        data['is_burned_in'] = True
+        data['burn_in_iteration'] = niters/2
+
+    def min_iterations(self, filename):
+        """Just checks that the sampler has been run for the minimum number
+        of iterations.
+        """
+        niters = self._getniters(filename)
+        data = self.burn_in_data['min_iterations']
+        data['is_burned_in'] = self._min_iterations < niters
+        if data['is_burned_in']:
+            data['burn_in_iteration'] = self._min_iterations
+        else:
+            data['burn_in_iteration'] = NOT_BURNED_IN_ITER
+
+    def max_posterior(self, filename):
+        """Applies max posterior test to self."""
+        logposts = self._getlogposts(filename)
+        burn_in_idx, is_burned_in = max_posterior(logposts, self._ndim)
+        data = self.burn_in_data['max_posterior']
+        # required things to store
+        data['is_burned_in'] = is_burned_in.all()
+        if data['is_burned_in']:
+            data['burn_in_iteration'] = self._index2iter(
+                filename, burn_in_idx.max())
+        else:
+            data['burn_in_iteration'] = NOT_BURNED_IN_ITER
+        # additional info
+        data['iteration_per_walker'] = self._index2iter(filename, burn_in_idx)
+        data['status_per_walker'] = is_burned_in
+
+    def posterior_step(self, filename):
+        """Applies the posterior-step test."""
+        logposts = self._getlogposts(filename)
+        burn_in_idx = numpy.array([posterior_step(logps, self._ndim)
+                                   for logps in logposts])
+        data = self.burn_in_data['posterior_step']
+        # this test cannot determine when something will burn in
+        # only when it was not burned in in the past
+        data['is_burned_in'] = True
+        data['burn_in_iteration'] = self._index2iter(
+            filename, burn_in_idx.max())
+        # additional info
+        data['iteration_per_walker'] = self._index2iter(filename, burn_in_idx)
+
+    def nacl(self, filename):
+        """Burn in based on ACL.
+
+        This applies the following test to determine burn in:
+
+        1. The first half of the chain is ignored.
+
+        2. An ACL is calculated from the second half.
+
+        3. If ``nacls`` times the ACL is < the length of the chain / 2,
+           the chain is considered to be burned in at the half-way point.
+        """
+        nsamples = self._getnsamples(filename)
+        kstart = int(nsamples / 2.)
+        acls = self._getacls(filename, start_index=kstart)
+        is_burned_in = {param: (self._nacls * acl) < kstart
+                        for (param, acl) in acls.items()}
+        data = self.burn_in_data['nacl']
+        # required things to store
+        data['is_burned_in'] = all(is_burned_in.values())
+        if data['is_burned_in']:
+            data['burn_in_iteration'] = self._index2iter(filename, kstart)
+        else:
+            data['burn_in_iteration'] = NOT_BURNED_IN_ITER
+        # additional information
+        data['status_per_parameter'] = is_burned_in
+
+    def ks_test(self, filename):
+        """Applies ks burn-in test."""
+        nsamples = self._getnsamples(filename)
+        with self.sampler.io(filename, 'r') as fp:
+            # get the samples from the mid point
+            samples1 = fp.read_raw_samples(
+                ['loglikelihood', 'logprior'], iteration=int(nsamples/2.))
+            # get the last samples
+            samples2 = fp.read_raw_samples(
+                ['loglikelihood', 'logprior'], iteration=-1)
+        # do the test
+        # is_the_same is a dictionary of params --> bool indicating whether or
+        # not the 1D marginal is the same at the half way point
+        is_the_same = ks_test(samples1, samples2, threshold=self._ksthreshold)
+        data = self.burn_in_data['ks_test']
+        # required things to store
+        data['is_burned_in'] = all(is_the_same.values())
+        if data['is_burned_in']:
+            data['burn_in_iteration'] = self._index2iter(
+                filename, int(nsamples/2.))
+        else:
+            data['burn_in_iteration'] = NOT_BURNED_IN_ITER
+        # additional
+        data['status_per_parameter'] = is_the_same
+
+    def evaluate(self, filename):
+        """Runs all of the burn-in tests."""
+        for tst in self.do_tests:
+            getattr(self, tst)(filename)
+        # The iteration to use for burn-in depends on the logic in the burn-in
+        # test string. For example, if the test was 'max_posterior | nacl' and
+        # max_posterior burned-in at iteration 5000 while nacl burned in at
+        # iteration 6000, we'd want to use 5000 as the burn-in iteration.
+        # However, if the test was 'max_posterior & nacl', we'd want to use
+        # 6000 as the burn-in iteration. The code below handles all cases by
+        # doing the following: first, take the collection of burn in iterations
+        # from all the burn in tests that were applied.  Next, cycle over the
+        # iterations in increasing order, checking which tests have burned in
+        # by that point. Then evaluate the burn-in string at that point to see
+        # if it passes, and if so, what the iteration is. The first point that
+        # the test passes is used as the burn-in iteration.
+        data = self.burn_in_data
+        burn_in_iters = numpy.unique([data[t]['burn_in_iteration']
+                                      for t in self.do_tests])
+        burn_in_iters.sort()
+        for ii in burn_in_iters:
+            test_results = {t: (data[t]['is_burned_in'] &
+                                0 <= data[t]['burn_in_iteration'] <= ii)
+                            for t in self.do_tests}
+            is_burned_in = eval(self.burn_in_test, {"__builtins__": None},
+                                test_results)
+            if is_burned_in:
+                break
+        self.is_burned_in = is_burned_in
+        if is_burned_in:
+            self.burn_in_iteration = ii
+            self.burn_in_index = self._iter2index(filename, ii)
+        else:
+            self.burn_in_iteration = NOT_BURNED_IN_ITER
+            self.burn_in_index = NOT_BURNED_IN_ITER
+
+    @classmethod
+    def from_config(cls, cp, sampler):
+        """Loads burn in from section [sampler-burn_in]."""
+        section = 'sampler'
+        tag = 'burn_in'
+        burn_in_test = cp.get_opt_tag(section, 'burn-in-test', tag)
+        kwargs = {}
+        if cp.has_option_tag(section, 'nacl', tag):
+            kwargs['nacl'] = int(cp.get_opt_tag(section, 'nacl', tag))
+        if cp.has_option_tag(section, 'ks-threshold', tag):
+            kwargs['ks_threshold'] = float(
+                cp.get_opt_tag(section, 'ks-threshold', tag))
+        if cp.has_option_tag(section, 'ndim', tag):
+            kwargs['ndim'] = int(
+                cp.get_opt_tag(section, 'ndim', tag))
+        if cp.has_option_tag(section, 'min-iterations', tag):
+            kwargs['min_iterations'] = int(
+                cp.get_opt_tag(section, 'min-iterations', tag))
+        return cls(sampler, burn_in_test, **kwargs)
+
+
+class MultiTemperedMCMCBurnInTests(MCMCBurnInTests):
+    """Adds support for multiple temperatures to the MCMCBurnInTests."""
+
+    def _getacls(self, filename, start_index):
+        """Convenience function for calculating acls for the given filename.
+
+        This function is used by the ``n_acl`` burn-in test. That function
+        expects the returned ``acls`` dict to just report a single ACL for
+        each parameter. Since multi-tempered samplers return an array of ACLs
+        for each parameter instead, this takes the max over the array before
+        returning.
+
+        Since we calculate the acls, this will also store it to the sampler.
+        """
+        acls = super(MultiTemperedMCMCBurnInTests, self)._getacls(
+            filename, start_index)
+        # return the max for each parameter
+        return {param: vals.max() for (param, vals) in acls.items()}
+
+    def _getlogposts(self, filename):
+        """Convenience function for retrieving log posteriors.
+
+        This just gets the coldest temperature chain, and returns arrays with
+        shape nwalkers x niterations, so the parent class can run the same
+        ``posterior_step`` function.
+        """
+        with self.sampler.io(filename, 'r') as fp:
+            samples = fp.read_raw_samples(
+                ['loglikelihood', 'logprior'], thin_start=0, thin_interval=1,
+                temps=0, flatten=False)
+            # reshape to drop the first dimension
+            for (stat, arr) in samples.items():
+                _, nwalkers, niterations = arr.shape
+                samples[stat] = arr.reshape((nwalkers, niterations))
+            logposts = samples['loglikelihood'] + samples['logprior']
+        return logposts

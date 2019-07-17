@@ -21,7 +21,6 @@ import logging, os.path
 from pycbc.workflow.core import Executable, FileList, Node, makedir, File, Workflow
 from pycbc.workflow.plotting import PlotExecutable, requirestr, excludestr
 from pycbc.workflow import WorkflowConfigParser
-from itertools import izip_longest
 from Pegasus import DAX3 as dax
 from pycbc.workflow import pegasus_workflow as wdax
 
@@ -58,7 +57,7 @@ def setup_foreground_inference(workflow, coinc_file, single_triggers,
 
     logging.info("Entering inference module")
 
-    # check if configuration file has inference section    
+    # check if configuration file has inference section
     if not workflow.cp.has_section("workflow-inference"):
         logging.info("There is no [workflow-inference] section in configuration file")
         logging.info("Leaving inference module")
@@ -69,7 +68,7 @@ def setup_foreground_inference(workflow, coinc_file, single_triggers,
 
     # make the directory that will contain the dax file
     makedir(dax_output)
-    
+
     # turn the config file into a File class
     config_path = os.path.abspath(dax_output + "/" + "_".join(tags) \
                                         + "foreground_inference.ini")
@@ -92,6 +91,8 @@ def setup_foreground_inference(workflow, coinc_file, single_triggers,
                                      tags=tags)
     node.new_output_file_opt(workflow.analysis_time, ".dax.map",
                                      "--output-map", tags=tags)
+    node.new_output_file_opt(workflow.analysis_time, ".tc.txt",
+                                     "--transformation-catalog", tags=tags)
 
     # get dax name and use it for the workflow name
     name = node.output_files[0].name
@@ -101,6 +102,9 @@ def setup_foreground_inference(workflow, coinc_file, single_triggers,
     map_file = node.output_files[1]
     node.add_opt("--output-dir", out_dir)
 
+    # get the transformation catalog name
+    tc_file = node.output_files[2]
+
     # add this node to the workflow
     workflow += node
 
@@ -109,7 +113,7 @@ def setup_foreground_inference(workflow, coinc_file, single_triggers,
     fil = node.output_files[0]
     job = dax.DAX(fil)
     job.addArguments("--basename %s" % os.path.splitext(os.path.basename(name))[0])
-    Workflow.set_job_properties(job, map_file)
+    Workflow.set_job_properties(job, map_file, tc_file)
     workflow._adag.addJob(job)
 
     # make dax a child of the inference workflow generator node
@@ -119,8 +123,8 @@ def setup_foreground_inference(workflow, coinc_file, single_triggers,
     logging.info("Leaving inference module")
 
 def make_inference_prior_plot(workflow, config_file, output_dir,
-                    sections=None, name="inference_prior",
-                    analysis_seg=None, tags=None):
+                              sections=None, name="inference_prior",
+                              parameters=None, analysis_seg=None, tags=None):
     """ Sets up the corner plot of the priors in the workflow.
 
     Parameters
@@ -136,7 +140,7 @@ def make_inference_prior_plot(workflow, config_file, output_dir,
     name: str
         The name in the [executables] section of the configuration file
         to use.
-    analysis_segs: {None, glue.segments.Segment}
+    analysis_segs: {None, ligo.segments.Segment}
        The segment this job encompasses. If None then use the total analysis
        time from the workflow.
     tags: {None, optional}
@@ -145,7 +149,7 @@ def make_inference_prior_plot(workflow, config_file, output_dir,
     Returns
     -------
     pycbc.workflow.FileList
-        A list of result and output files. 
+        A list of result and output files.
     """
 
     # default values
@@ -166,6 +170,8 @@ def make_inference_prior_plot(workflow, config_file, output_dir,
     node.new_output_file_opt(analysis_seg, ".png", "--output-file")
     if sections is not None:
         node.add_opt("--sections", " ".join(sections))
+    if parameters is not None:
+        node.add_opt("--parameters", " ".join(parameters))
 
     # add node to workflow
     workflow += node
@@ -173,7 +179,7 @@ def make_inference_prior_plot(workflow, config_file, output_dir,
     return node.output_files
 
 def make_inference_summary_table(workflow, inference_file, output_dir,
-                    variable_args=None, name="inference_table",
+                    variable_params=None, name="inference_table",
                     analysis_seg=None, tags=None):
     """ Sets up the corner plot of the posteriors in the workflow.
 
@@ -185,12 +191,12 @@ def make_inference_summary_table(workflow, inference_file, output_dir,
         The file with posterior samples.
     output_dir: str
         The directory to store result plots and files.
-    variable_args : list
-        A list of parameters to use instead of [variable_args].
+    variable_params : list
+        A list of parameters to use instead of [variable_params].
     name: str
         The name in the [executables] section of the configuration file
         to use.
-    analysis_segs: {None, glue.segments.Segment}
+    analysis_segs: {None, ligo.segments.Segment}
        The segment this job encompasses. If None then use the total analysis
        time from the workflow.
     tags: {None, optional}
@@ -199,7 +205,7 @@ def make_inference_summary_table(workflow, inference_file, output_dir,
     Returns
     -------
     pycbc.workflow.FileList
-        A list of result and output files. 
+        A list of result and output files.
     """
 
     # default values
@@ -217,7 +223,7 @@ def make_inference_summary_table(workflow, inference_file, output_dir,
     # add command line options
     node.add_input_opt("--input-file", inference_file)
     node.new_output_file_opt(analysis_seg, ".html", "--output-file")
-    node.add_opt("--parameters", " ".join(variable_args))
+    node.add_opt("--parameters", " ".join(variable_params))
 
     # add node to workflow
     workflow += node
@@ -242,7 +248,7 @@ def make_inference_posterior_plot(
     name: str
         The name in the [executables] section of the configuration file
         to use.
-    analysis_segs: {None, glue.segments.Segment}
+    analysis_segs: {None, ligo.segments.Segment}
        The segment this job encompasses. If None then use the total analysis
        time from the workflow.
     tags: {None, optional}
@@ -251,7 +257,7 @@ def make_inference_posterior_plot(
     Returns
     -------
     pycbc.workflow.FileList
-        A list of result and output files. 
+        A list of result and output files.
     """
 
     # default values
@@ -270,7 +276,8 @@ def make_inference_posterior_plot(
     # add command line options
     node.add_input_opt("--input-file", inference_file)
     node.new_output_file_opt(analysis_seg, ".png", "--output-file")
-    node.add_opt("--parameters", " ".join(parameters))
+    if parameters is not None:
+        node.add_opt("--parameters", " ".join(parameters))
 
     # add node to workflow
     workflow += node
@@ -282,11 +289,11 @@ def make_inference_1d_posterior_plots(
                     analysis_seg=None, tags=None):
     parameters = [] if parameters is None else parameters
     files = FileList([])
-    for parameter in parameters:
+    for (ii, parameter) in enumerate(parameters):
         files += make_inference_posterior_plot(
                     workflow, inference_file, output_dir,
                     parameters=[parameter], analysis_seg=analysis_seg,
-                    tags=tags + [parameter])
+                    tags=tags + ['param{}'.format(ii)])
     return files
 
 def make_inference_samples_plot(
@@ -331,7 +338,7 @@ def make_inference_acceptance_rate_plot(workflow, inference_file, output_dir,
     name: str
         The name in the [executables] section of the configuration file
         to use.
-    analysis_segs: {None, glue.segments.Segment}
+    analysis_segs: {None, ligo.segments.Segment}
        The segment this job encompasses. If None then use the total analysis
        time from the workflow.
     tags: {None, optional}
@@ -340,7 +347,7 @@ def make_inference_acceptance_rate_plot(workflow, inference_file, output_dir,
     Returns
     -------
     pycbc.workflow.FileList
-        A list of result and output files. 
+        A list of result and output files.
     """
 
     # default values
@@ -364,3 +371,55 @@ def make_inference_acceptance_rate_plot(workflow, inference_file, output_dir,
 
     return node.output_files
 
+def make_inference_inj_plots(workflow, inference_files, output_dir,
+                             parameters, name="inference_recovery",
+                             analysis_seg=None, tags=None):
+    """ Sets up the recovered versus injected parameter plot in the workflow.
+
+    Parameters
+    ----------
+    workflow: pycbc.workflow.Workflow
+        The core workflow instance we are populating
+    inference_files: pycbc.workflow.FileList
+        The files with posterior samples.
+    output_dir: str
+        The directory to store result plots and files.
+    parameters : list
+        A ``list`` of parameters. Each parameter gets its own plot.
+    name: str
+        The name in the [executables] section of the configuration file
+        to use.
+    analysis_segs: {None, ligo.segments.Segment}
+       The segment this job encompasses. If None then use the total analysis
+       time from the workflow.
+    tags: {None, optional}
+        Tags to add to the inference executables.
+
+    Returns
+    -------
+    pycbc.workflow.FileList
+        A list of result and output files.
+    """
+
+    # default values
+    tags = [] if tags is None else tags
+    analysis_seg = workflow.analysis_time \
+                       if analysis_seg is None else analysis_seg
+    output_files = FileList([])
+
+    # make the directory that will contain the output files
+    makedir(output_dir)
+
+    # add command line options
+    for (ii, param) in enumerate(parameters):
+        plot_exe = PlotExecutable(workflow.cp, name, ifos=workflow.ifos,
+                                  out_dir=output_dir,
+                                  tags=tags+['param{}'.format(ii)])
+        node = plot_exe.create_node()
+        node.add_input_list_opt("--input-file", inference_files)
+        node.new_output_file_opt(analysis_seg, ".png", "--output-file")
+        node.add_opt("--parameters", param)
+        workflow += node
+        output_files += node.output_files
+
+    return output_files

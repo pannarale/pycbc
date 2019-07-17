@@ -62,7 +62,7 @@ class MultiDetOptionAction(argparse.Action):
                              'strings are not supplying the value to append, '
                              'the append const action may be more appropriate')
         if const is not None and nargs != argparse.OPTIONAL:
-            raise ValueError('nargs must be %r to supply const' 
+            raise ValueError('nargs must be %r to supply const'
                              % argparse.OPTIONAL)
         super(MultiDetOptionAction, self).__init__(
             option_strings=option_strings,
@@ -136,7 +136,7 @@ class MultiDetOptionActionSpecial(MultiDetOptionAction):
             value_split = value.split(':')
             if len(value_split) == 2:
                 # "Normal" case, all ifos supplied independetly as "H1:VALUE"
-                if items.has_key(value_split[0]):
+                if value_split[0] in items:
                     err_msg += "Multiple values supplied for ifo %s.\n" \
                                %(value_split[0],)
                     err_msg += "Already have %s." %(items[value_split[0]])
@@ -148,7 +148,7 @@ class MultiDetOptionActionSpecial(MultiDetOptionAction):
                 # want to pretend H1 data is actually L1 (or similar). So if I
                 # supply --channel-name H1:L1:LDAS-STRAIN I can use L1 data and
                 # pretend it is H1 internally.
-                if items.has_key(value_split[0]):
+                if value_split[0] in items:
                     err_msg += "Multiple values supplied for ifo %s.\n" \
                                %(value_split[0],)
                     err_msg += "Already have %s." %(items[value_split[0]])
@@ -174,7 +174,7 @@ class MultiDetOptionAppendAction(MultiDetOptionAction):
             value = value.split(':')
             if len(value) == 2:
                 # "Normal" case, all ifos supplied independetly as "H1:VALUE"
-                if items.has_key(value[0]):
+                if value[0] in items:
                     items[value[0]].append(self.internal_type(value[1]))
                 else:
                     items[value[0]] = [self.internal_type(value[1])]
@@ -188,8 +188,8 @@ class MultiDetOptionAppendAction(MultiDetOptionAction):
         setattr(namespace, self.dest, items)
 
 def required_opts(opt, parser, opt_list, required_by=None):
-    """Check that all the opts are defined 
-    
+    """Check that all the opts are defined
+
     Parameters
     ----------
     opt : object
@@ -209,8 +209,8 @@ def required_opts(opt, parser, opt_list, required_by=None):
             parser.error(err_str)
 
 def required_opts_multi_ifo(opt, parser, ifo, opt_list, required_by=None):
-    """Check that all the opts are defined 
-    
+    """Check that all the opts are defined
+
     Parameters
     ----------
     opt : object
@@ -235,7 +235,7 @@ def required_opts_multi_ifo(opt, parser, ifo, opt_list, required_by=None):
 
 def ensure_one_opt(opt, parser, opt_list):
     """  Check that one and only one in the opt_list is defined in opt
-    
+
     Parameters
     ----------
     opt : object
@@ -261,7 +261,7 @@ def ensure_one_opt(opt, parser, opt_list):
 
 def ensure_one_opt_multi_ifo(opt, parser, ifo, opt_list):
     """  Check that one and only one in the opt_list is defined in opt
-    
+
     Parameters
     ----------
     opt : object

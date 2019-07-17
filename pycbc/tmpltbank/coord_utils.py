@@ -18,6 +18,7 @@ from __future__ import division
 import logging
 import numpy
 import os.path
+from six.moves import range
 from pycbc.tmpltbank.lambda_mapping import get_chirp_params
 from pycbc import pnutils
 from pycbc.tmpltbank.em_progenitors import generate_em_constraint_data, load_ns_sequence, min_eta_for_em_bright
@@ -291,7 +292,9 @@ def get_random_mass(numPoints, massRangeParams):
 
     return mass1, mass2, spin1z, spin2z
 
-def get_cov_params(mass1, mass2, spin1z, spin2z, metricParams, fUpper):
+def get_cov_params(mass1, mass2, spin1z, spin2z, metricParams, fUpper,
+                   lambda1=None, lambda2=None, quadparam1=None,
+                   quadparam2=None):
     """
     Function to convert between masses and spins and locations in the xi
     parameter space. Xi = Cartesian metric and rotated to principal components.
@@ -324,12 +327,16 @@ def get_cov_params(mass1, mass2, spin1z, spin2z, metricParams, fUpper):
     """
 
     # Do this by doing masses - > lambdas -> mus
-    mus = get_conv_params(mass1, mass2, spin1z, spin2z, metricParams, fUpper)
+    mus = get_conv_params(mass1, mass2, spin1z, spin2z, metricParams, fUpper,
+                          lambda1=lambda1, lambda2=lambda2,
+                          quadparam1=quadparam1, quadparam2=quadparam2)
     # and then mus -> xis
     xis = get_covaried_params(mus, metricParams.evecsCV[fUpper])
     return xis
 
-def get_conv_params(mass1, mass2, spin1z, spin2z, metricParams, fUpper):
+def get_conv_params(mass1, mass2, spin1z, spin2z, metricParams, fUpper,
+                    lambda1=None, lambda2=None, quadparam1=None,
+                    quadparam2=None):
     """
     Function to convert between masses and spins and locations in the mu
     parameter space. Mu = Cartesian metric, but not principal components.
@@ -362,7 +369,9 @@ def get_conv_params(mass1, mass2, spin1z, spin2z, metricParams, fUpper):
 
     # Do this by masses -> lambdas
     lambdas = get_chirp_params(mass1, mass2, spin1z, spin2z,
-                               metricParams.f0, metricParams.pnOrder)
+                               metricParams.f0, metricParams.pnOrder,
+                               lambda1=lambda1, lambda2=lambda2,
+                               quadparam1=quadparam1, quadparam2=quadparam2)
     # and lambdas -> mus
     mus = get_mu_params(lambdas, metricParams, fUpper)
     return mus
@@ -469,7 +478,7 @@ def rotate_vector(evecs, old_vector, rescale_factor, index):
         Position of the point(s) in the resulting coordinate.
     """
     temp = 0
-    for i in xrange(len(evecs)):
+    for i in range(len(evecs)):
         temp += (evecs[i,index] * rescale_factor) * old_vector[i]
     return temp
 
@@ -526,7 +535,7 @@ def get_point_distance(point1, point2, metricParams, fUpper):
     bXis = get_cov_params(bMass1, bMass2, bSpin1, bSpin2, metricParams, fUpper)
 
     dist = (aXis[0] - bXis[0])**2
-    for i in xrange(1,len(aXis)):
+    for i in range(1,len(aXis)):
         dist += (aXis[i] - bXis[i])**2
 
     return dist, aXis, bXis
@@ -748,7 +757,7 @@ def find_closest_calculated_frequencies(input_freqs, metric_freqs):
     # NOTE: totmass and f_cutoff are both numpy arrays as this function is
     #       designed so that the cutoff can be calculated for many systems
     #       simulataneously
-    for i in xrange(len(metric_freqs)):
+    for i in range(len(metric_freqs)):
         if i == 0:
             # If frequency is lower than halfway between the first two entries
             # use the first (lowest) value

@@ -12,9 +12,20 @@ I use a similar naming convention here, with minor simplifications to the
 twiddle factors.
 """
 from __future__ import absolute_import
-import numpy, weave, ctypes, pycbc.types
-from pycbc import WEAVE_FLAGS
+import numpy, ctypes, pycbc.types
 from pycbc.libutils import get_ctypes_library
+import logging
+from .fftw_pruned_cython import second_phase_cython
+
+warn_msg = ("The FFTW_pruned module can be used to speed up computing SNR "
+            "timeseries by computing first at a low sample rate and then "
+            "computing at full sample rate only at certain samples. This code "
+            "has not yet been used in production, and has no test case. "
+            "This has also been moved from weave to Cython in this state. "
+            "This code would need verification before trusting results. "
+            "Please do contribute test cases.")
+
+logging.warning(warn_msg)
 
 # FFTW constants
 FFTW_FORWARD = -1
@@ -50,18 +61,18 @@ def plan_transpose(N1, N2):
     rows = N1
     cols = N2
 
-    iodim = numpy.zeros(6, dtype=numpy.int32) 
+    iodim = numpy.zeros(6, dtype=numpy.int32)
     iodim[0] = rows
     iodim[1] = 1
     iodim[2] = cols
     iodim[3] = cols
     iodim[4] = rows
     iodim[5] = 1
-    
+
     N = N1*N2
     vin = pycbc.types.zeros(N, dtype=numpy.complex64)
     vout = pycbc.types.zeros(N, dtype=numpy.complex64)
-    
+
     f = float_lib.fftwf_plan_guru_dft
     f.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int,
                   ctypes.c_void_p, ctypes.c_void_p,
@@ -123,7 +134,7 @@ def first_phase(invec, outvec, N1, N2):
     if _theplan is None:
         _theplan = plan_first_phase(N1, N2)
     fexecute(_theplan, invec.ptr, outvec.ptr)
-    
+
 def second_phase(invec, indices, N1, N2):
     """
     This is the second phase of the FFT decomposition that actually performs
@@ -148,83 +159,14 @@ def second_phase(invec, indices, N1, N2):
     """
     invec = numpy.array(invec.data, copy=False)
     NI = len(indices) # pylint:disable=unused-variable
-    N1=int(N1)
-    N2=int(N2)
+    N1 = int(N1)
+    N2 = int(N2)
     out = numpy.zeros(len(indices), dtype=numpy.complex64)
-    code = """
-        float pi = 3.14159265359;
-        for(int i=0; i<NI; i++){
-            std::complex<double> val= (0, 0);
-            unsigned int k = indices[i];
-            int N = N1*N2;
-            float k2 = k % N2;
-            float phase_inc = 2 * pi * float(k) / float(N);
-            float sp, cp;
+    indices = numpy.array(indices, dtype=numpy.uint32)
 
-            for (float n1=0; n1<N1; n1+=1){
-                sincosf(phase_inc * n1, &sp, &cp);
-                val += std::complex<float>(cp, sp) * invec[int(k2 + N2*n1)];
-            }
-            out[i] = val;
-        }
-    """
-    weave.inline(code, ['N1', 'N2', 'NI', 'indices', 'out', 'invec'],
-                      )
-    return out
-
-def fast_second_phase(invec, indices, N1, N2):
-    """
-    This is the second phase of the FFT decomposition that actually performs
-    the pruning. It is an explicit calculation for the subset of points. Note
-    that there seem to be some numerical accumulation issues at various values
-    of N1 and N2.
-
-    Parameters
-    ----------
-    invec :
-        The result of the first phase FFT
-    indices : array of ints
-        The index locations to calculate the FFT
-    N1 : int
-        The length of the second phase "FFT"
-    N2 : int
-        The length of the first phase FFT
-
-    Returns
-    -------
-    out : array of floats
-    """
-    invec = numpy.array(invec.data, copy=False)
-    NI = len(indices) # pylint:disable=unused-variable
-    N1=int(N1)
-    N2=int(N2)
-    out = numpy.zeros(len(indices), dtype=numpy.complex64)
-    
     # Note, the next step if this needs to be faster is to invert the loops
-    code = """
-        float pi = 3.14159265359;
-        for(int i=0; i<NI; i++){
-            float sp, cp;
-            std::complex<double> val= (0, 0);
-            
-            unsigned int k = indices[i];
-            int N = N1*N2;
-            float k2 = k % N2;
-            
-            float phase_inc = 2 * pi * float(k) / float(N);
-            sincosf(phase_inc, &sp, &cp);
-            std::complex<float> twiddle_inc = std::complex<float>(cp, sp);             
-            std::complex<float> twiddle = std::complex<float>(1, 0);
+    second_phase_cython(N1, N2, NI, indices, out, invec)
 
-            for (float n1=0; n1<N1; n1+=1){
-                val += twiddle * invec[int(k2 + N2*n1)];
-                twiddle *= twiddle_inc;
-            }
-            out[i] = val;
-        }
-    """
-    weave.inline(code, ['N1', 'N2', 'NI', 'indices', 'out', 'invec'],
-                       extra_compile_args=[WEAVE_FLAGS])
     return out
 
 _thetransposeplan = None
@@ -232,7 +174,7 @@ def fft_transpose_fftw(vec):
     """
     Perform an FFT transpose from vec into outvec.
     (Alex to provide more details in a write-up.)
-   
+
     Parameters
     -----------
     vec : array
@@ -251,24 +193,6 @@ def fft_transpose_fftw(vec):
     ftexecute(_thetransposeplan, vec.ptr, outvec.ptr)
     return  outvec
 
-def fft_transpose_numpy(vec):
-    """
-    Perform a numpy transpose from vec into outvec.
-    (Alex to provide more details in a write-up.)
-   
-    Parameters
-    -----------
-    vec : array
-        Input array.
-
-    Returns
-    --------
-    outvec : array
-        Transposed output array.
-    """
-    N1, N2 = splay(vec)
-    return pycbc.types.Array(vec.data.copy().reshape(N2, N1).transpose().reshape(len(vec)).copy())
-
 fft_transpose = fft_transpose_fftw
 
 def splay(vec):
@@ -284,7 +208,7 @@ def pruned_c2cifft(invec, outvec, indices, pretransposed=False):
     decomposition is easier to choose. This is not a strict requirement of the
     functions, but it is unlikely to the optimal to use anything but power
     of 2. (Alex to provide more details in write up.
- 
+
     Parameters
     -----------
     invec : array
@@ -308,5 +232,5 @@ def pruned_c2cifft(invec, outvec, indices, pretransposed=False):
     if not pretransposed:
         invec = fft_transpose(invec)
     first_phase(invec, outvec, N1=N1, N2=N2)
-    out = fast_second_phase(outvec, indices, N1=N1, N2=N2)
+    out = second_phase(outvec, indices, N1=N1, N2=N2)
     return out

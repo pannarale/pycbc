@@ -1,20 +1,21 @@
-""" Chisq based on sine-gaussian tiles """
+"""Chisq based on sine-gaussian tiles.
+See https://arxiv.org/abs/1709.08974 for a discussion.
+"""
 
 import numpy
-import logging
 
 from pycbc.waveform.utils import apply_fseries_time_shift
 from pycbc.filter import sigma
 from pycbc.waveform import sinegauss
 from pycbc.vetoes.chisq import SingleDetPowerChisq
-from pycbc.events import newsnr
+from pycbc.events import ranking
 
 class SingleDetSGChisq(SingleDetPowerChisq):
     """Class that handles precomputation and memory management for efficiently
     running the sine-Gaussian chisq
     """
     returns = {'sg_chisq': numpy.float32}
-    
+
     def __init__(self, bank, num_bins=0,
                        snr_threshold=None,
                        chisq_locations=None):
@@ -32,8 +33,8 @@ class SingleDetSGChisq(SingleDetPowerChisq):
             List of strings which detail where to place a sine-Gaussian.
             The format is 'region-boolean:q1-offset1,q2-offset2'.
             The offset is relative to the end frequency of the approximant.
-            The region is a boolean expresion such as 'mtotal>40' and indicates
-            where to apply this set of sine-Gaussians.
+            The region is a boolean expression such as 'mtotal>40' indicating
+            which templates to apply this set of sine-Gaussians to.
         """
         if snr_threshold is not None:
             self.do = True
@@ -48,18 +49,18 @@ class SingleDetSGChisq(SingleDetPowerChisq):
                     self.params[h] = values
         else:
             self.do = False
-            
+
     @staticmethod
     def insert_option_group(parser):
         group = parser.add_argument_group("Sine-Gaussian Chisq")
         group.add_argument("--sgchisq-snr-threshold", type=float,
             help="Minimum SNR threshold to use SG chisq")
         group.add_argument("--sgchisq-locations", type=str, nargs='+',
-            help="The frequencies and quality factors of the sine-gaussians"
-                 " to use. The format is 'region-boolean:q1-offset1,q2-offset2'."
-                 "The offset is relative to the end frequency of the approximant."
-                 "The region is a boolean expresion such as 'mtotal>40' and indicates "
-                 "where to apply this set of sine-Gaussians.")
+            help="Frequency offsets and quality factors of the sine-Gaussians"
+                 " to use, format 'region-boolean:q1-offset1,q2-offset2'. "
+                 "Offset is relative to the end frequency of the approximant."
+                 " Region is a boolean expression selecting templates to "
+                 "apply the sine-Gaussians to, ex. 'mtotal>40'")
 
     @classmethod
     def from_cli(cls, args, bank, chisq_bins):
@@ -101,7 +102,7 @@ class SingleDetSGChisq(SingleDetPowerChisq):
         if template.params.template_hash not in self.params:
             return numpy.ones(len(snrv))
         values = self.params[template.params.template_hash].split(',')
-        
+
         # Get the chisq bins to use as the frequency reference point
         bins = self.cached_chisq_bins(template, psd)
 
@@ -110,7 +111,7 @@ class SingleDetSGChisq(SingleDetPowerChisq):
         for i, snrvi in enumerate(snrv):
             #Skip if newsnr too low
             snr = abs(snrvi * snr_norm)
-            nsnr = newsnr(snr, bchisq[i] / bchisq_dof[i])
+            nsnr = ranking.newsnr(snr, bchisq[i] / bchisq_dof[i])
             if nsnr < self.snr_threshold:
                 continue
 
@@ -121,11 +122,11 @@ class SingleDetSGChisq(SingleDetPowerChisq):
             # Shift the time of interest to be centered on 0
             stilde_shift = apply_fseries_time_shift(stilde, -time)
 
-            # Only apply the sine-Gaussian in a +-50 Hz range around the 
+            # Only apply the sine-Gaussian in a +-50 Hz range around the
             # central frequency
             qwindow = 50
             chisq[i] = 0
-            
+
             # Estimate the maximum frequency up to which the waveform has
             # power by approximating power per frequency
             # as constant over the last 2 chisq bins. We cannot use the final
@@ -133,12 +134,12 @@ class SingleDetSGChisq(SingleDetPowerChisq):
             # terminates.
             fstep = (bins[-2] - bins[-3])
             fpeak = (bins[-2] + fstep) * template.delta_f
-            
+
             # This is 90% of the Nyquist frequency of the data
             # This allows us to avoid issues near Nyquist due to resample
             # Filtering
             fstop = len(stilde) * stilde.delta_f * 0.9
-            
+
             dof = 0
             # Calculate the sum of SNR^2 for the sine-Gaussians specified
             for descr in values:
@@ -149,7 +150,7 @@ class SingleDetSGChisq(SingleDetPowerChisq):
                 flow = max(kmin * template.delta_f, fcen - qwindow)
                 fhigh = fcen + qwindow
 
-                # If any sine-gaussian tile has an upper frequency near 
+                # If any sine-gaussian tile has an upper frequency near
                 # nyquist return 1 instead.
                 if fhigh > fstop:
                     return numpy.ones(len(snrv))
@@ -162,7 +163,7 @@ class SingleDetSGChisq(SingleDetPowerChisq):
                                       len(template) * template.delta_f,
                                       template.delta_f).astype(numpy.complex64)
                 gsigma = sigma(gtem, psd=psd,
-                                     low_frequency_cutoff=flow, 
+                                     low_frequency_cutoff=flow,
                                      high_frequency_cutoff=fhigh)
                 #Calculate the SNR of the tile
                 gsnr = (gtem[kmin:kmax] * stilde_shift[kmin:kmax]).sum()
@@ -173,6 +174,5 @@ class SingleDetSGChisq(SingleDetPowerChisq):
                 chisq[i] = 1
             else:
                 chisq[i] /= dof
-            logging.info('Found chisq %s', chisq[i])
         return chisq
 

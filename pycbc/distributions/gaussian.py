@@ -17,13 +17,14 @@ This modules provides classes for evaluating Gaussian distributions.
 """
 
 import numpy
+from scipy.special import erf, erfinv
 import scipy.stats
 from pycbc.distributions import bounded
 
 class Gaussian(bounded.BoundedDist):
     r"""A Gaussian distribution on the given parameters; the parameters are
     independent of each other.
-    
+
     Bounds can be provided on each parameter, in which case the distribution
     will be a truncated Gaussian distribution.  The PDF of a truncated
     Gaussian distribution is given by:
@@ -41,7 +42,7 @@ class Gaussian(bounded.BoundedDist):
     Note that if :math:`[a,b) = [-\infty, \infty)`, this reduces to a standard
     Gaussian distribution.
 
-    
+
     Instances of this class can be called like a function. By default, logpdf
     will be called, but this can be changed by setting the class's __call__
     method to its pdf method.
@@ -74,7 +75,7 @@ class Gaussian(bounded.BoundedDist):
     Create a bounded Gaussian distribution on :math:`[1,10)` with a mean of 3
     and a variance of 2:
     >>> dist = distributions.Gaussian(mass1=(1,10), mass1_mean=3, mass1_var=2)
-   
+
     Create a bounded Gaussian distribution with the same parameters, but with
     cyclic boundary conditions:
     >>> dist = distributions.Gaussian(mass1=Bounds(1,10, cyclic=True), mass1_mean=3, mass1_var=2)
@@ -136,6 +137,21 @@ class Gaussian(bounded.BoundedDist):
     @property
     def var(self):
         return self._var
+
+    def cdfinv(self, param, value):
+        """Return inverse of cdf to map unit interval to parameter bounds.
+        """
+        a = self._bounds[param][0]
+        b = self._bounds[param][1]
+        mu = self._mean[param]
+        sigma = numpy.sqrt(self._var[param])
+        phi_a = erf((a - mu)/sigma)
+        phi_b = erf((b - mu)/sigma)
+        z = phi_b - phi_a
+
+        new_value = mu + sigma * erfinv(value * z + erf((a - mu)/sigma))
+
+        return new_value
 
 
     def _pdf(self, **kwargs):

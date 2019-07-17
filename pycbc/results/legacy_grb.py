@@ -25,22 +25,8 @@ from __future__ import division
 import re
 import os
 from argparse import ArgumentParser
-import matplotlib
-# Only if a backend is not already set ... This should really *not* be done
-# here, but in the executables you should set matplotlib.use()
-# This matches the check that matplotlib does internally, but this *may* be
-# version dependenant. If this is a problem then remove this and control from
-# the executables directly.
-import sys
-if not 'matplotlib.backends' in sys.modules:
-    matplotlib.use('agg')
-import matplotlib.pyplot as plt
-from pycbc_glue import markup, segments
-from lal.gpstime import gps_to_utc, LIGOTimeGPS
-from matplotlib.patches import Rectangle
-from matplotlib.lines import Line2D
-from matplotlib.ticker import ScalarFormatter
-from pycbc.results.color import ifo_color
+from ligo import segments
+from glue import markup
 
 def initialize_page(title, style, script, header=None):
     """
@@ -132,6 +118,7 @@ def write_summary(page, args, ifos, skyError=None, ipn=False, ipnError=False):
         Write summary of information to markup.page object page
     """
     from pylal import antenna
+    from lal.gpstime import gps_to_utc, LIGOTimeGPS
 
     gps = args.start_time
     grbdate = gps_to_utc(LIGOTimeGPS(gps))\
@@ -233,14 +220,14 @@ def write_antenna(page, args, seg_plot=None, grid=False, ipn=False):
                 antenna_ifo[ifo].append(round(f_q,3))
         dectKeys = antenna_ifo.keys()
 
-        for elements in range(len(antenna_ifo.values()[0])):
+        for elements in range(len(tuple(antenna_ifo.values())[0])):
             newDict={}
             for detectors in range(len(antenna_ifo.keys())):
                 newDict[dectKeys[detectors]] = antenna_ifo[\
                                                dectKeys[detectors]][elements]
             for key in newDict.keys():
                 th.append(key)
-            td.append(newDict.values())        
+            td.append(newDict.values())
         page = write_table(page, list(set(th)), td)
     for ifo in ifos:
         _, _, _, f_q = antenna.response(args.start_time, args.ra, args.dec,
@@ -270,7 +257,7 @@ def write_antenna(page, args, seg_plot=None, grid=False, ipn=False):
 #    th2 = ['Response Diagram']
 #    td2 = [plot() ]
 
-        # FIXME: Add these in!!
+# FIXME: Add these in!!
 #    plot = markup.page()
 #    p = "ALL_TIMES/plots_clustered/GRB%s_search.png"\
 #        % args.grb_name
@@ -329,20 +316,26 @@ def write_offsource(page, args, grbtag, onsource=False):
 
     th = ['Re-weighted SNR', 'Coherent SNR']
 
-    if onsource:
-        dir = 'ALL_TIMES'
+    if args.time_slides:
+        if onsource:
+            out_dir = 'ZEROLAG_ALL'
+        else:
+            out_dir = 'ZEROLAG_OFF'
     else:
-        dir = 'OFFSOURCE'
+        if onsource:
+            out_dir = 'ALL_TIMES'
+        else:
+            out_dir = 'OFFSOURCE'
 
     plot = markup.page()
-    p = "%s/plots_clustered/GRB%s_bestnr_vs_time_noinj.png" % (dir, grbtag)
-    plot.a(href=p, title="Coherent SNR versus time")
+    p = "%s/plots_clustered/GRB%s_bestnr_vs_time_noinj.png" % (out_dir, grbtag)
+    plot.a(href=p, title="Detection statistic versus time")
     plot.img(src=p)
     plot.a.close()
     td = [ plot() ]
 
     plot = markup.page()
-    p = "%s/plots_clustered/GRB%s_triggers_vs_time_noinj.png" % (dir, grbtag)
+    p = "%s/plots_clustered/GRB%s_triggers_vs_time_noinj.png" % (out_dir, grbtag)
     plot.a(href=p, title="Coherent SNR versus time")
     plot.img(src=p)
     plot.a.close()
@@ -353,7 +346,7 @@ def write_offsource(page, args, grbtag, onsource=False):
         th.append('%s SNR' % ifo)
         plot = markup.page()
         p = "%s/plots_clustered/GRB%s_%s_triggers_vs_time_noinj.png"\
-            % (dir, grbtag, ifo)
+            % (out_dir, grbtag, ifo)
         plot.a(href=p, title="%s SNR versus time" % ifo)
         plot.img(src=p)
         plot.a.close()
@@ -390,7 +383,7 @@ def write_chisq(page, injList, grbtag):
             plot.img(src=p)
             plot.a.close()
             d.append(plot())
-  
+
         td.append(d)
 
     page = write_table(page, th, td)
@@ -577,10 +570,10 @@ def write_exclusion_distances(page , trial, injList, massbins, reduced=False,
     FAPS = []
     for line in file:
         line = line.replace('\n','')
-        if float(line) == -2:
+        if line == "-2":
             FAPS.append('No event')
         else:
-            FAPS.append(float(line))
+            FAPS.append(line)
 
     file.close()
 
@@ -593,7 +586,7 @@ def write_exclusion_distances(page , trial, injList, massbins, reduced=False,
     page.a.close()
 
     if reduced or not injList:
-        return page  
+        return page
 
     page.h3()
     page.add('Detection efficiency plots - injections louder than loudest '
@@ -657,7 +650,12 @@ def write_exclusion_distances(page , trial, injList, massbins, reduced=False,
 
 def make_grb_segments_plot(wkflow, science_segs, trigger_time, trigger_name,
                            out_dir, coherent_seg=None, fail_criterion=None):
-    
+
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+    from matplotlib.lines import Line2D
+    from pycbc.results.color import ifo_color
+
     ifos = wkflow.ifos
     if len(science_segs.keys()) == 0:
         extent = segments.segment(int(wkflow.cp.get("workflow", "start-time")),
@@ -677,6 +675,8 @@ def make_grb_segments_plot(wkflow, science_segs, trigger_time, trigger_name,
 
     # Make plot
     fig, subs = plt.subplots(len(ifos), sharey=True)
+    if len(ifos) == 1:
+        subs = [subs]
     plt.xticks(rotation=20, ha='right')
     for sub, ifo in zip(subs, ifos):
         for seg in science_segs[ifo]:
@@ -732,7 +732,7 @@ def make_grb_segments_plot(wkflow, science_segs, trigger_time, trigger_name,
     fig.axes[0].set_title('Science Segments for GRB%s' % trigger_name)
     plt.tight_layout()
     fig.subplots_adjust(hspace=0)
-    
+
     plot_name = 'GRB%s_segments.png' % trigger_name
     plot_url = 'file://localhost%s/%s' % (out_dir, plot_name)
     fig.savefig('%s/%s' % (out_dir, plot_name))

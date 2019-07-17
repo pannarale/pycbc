@@ -17,7 +17,7 @@
 """
 Provides a class representing a frequency series.
 """
-
+from __future__ import division
 import os as _os, h5py
 from pycbc.types.array import Array, _convert, zeros, _noreal
 import lal as _lal
@@ -73,7 +73,14 @@ class FrequencySeries(Array):
                     epoch = _lal.LIGOTimeGPS(0)
             elif epoch is not None:
                 try: 
-                    epoch = _lal.LIGOTimeGPS(epoch)
+                    if isinstance(epoch, _numpy.generic):
+                        # In python3 lal LIGOTimeGPS will not work on numpy
+                        # types as input. A quick google on how to generically
+                        # convert numpy floats/ints to the python equivalent
+                        # https://stackoverflow.com/questions/9452775/
+                        epoch = _lal.LIGOTimeGPS(epoch.item())
+                    else:
+                        epoch = _lal.LIGOTimeGPS(epoch)
                 except:
                     raise TypeError('epoch must be either None or a lal.LIGOTimeGPS')
         Array.__init__(self, initial_array, dtype=dtype, copy=copy)
@@ -124,6 +131,12 @@ class FrequencySeries(Array):
                                delta_f=new_delta_f,
                                epoch=self._epoch,
                                copy=False)
+
+    def at_frequency(self, freq):
+        """ Return the value at the specified frequency
+        """
+        return self[int(freq / self.delta_f)]
+
     @property
     def start_time(self):
         """Return the start time of this vector
@@ -396,7 +409,7 @@ class FrequencySeries(Array):
             _numpy.savetxt(path, output)
         elif ext == '.xml' or path.endswith('.xml.gz'):
             from pycbc.io.live import make_psd_xmldoc
-            from pycbc_glue.ligolw import utils
+            from glue.ligolw import utils
 
             if self.kind != 'real':
                 raise ValueError('XML only supports real frequency series')
@@ -448,7 +461,7 @@ class FrequencySeries(Array):
 
         # add 0.5 to round integer
         tlen  = int(1.0 / self.delta_f / delta_t + 0.5)
-        flen = tlen / 2 + 1
+        flen = int(tlen / 2 + 1)
         
         if flen < len(self):
             raise ValueError("The value of delta_t (%s) would be "
@@ -469,13 +482,14 @@ class FrequencySeries(Array):
 
     @_noreal
     def cyclic_time_shift(self, dt):
-        """Shift the data by a given number of seconds
-        
-        Shift the data in the time domain a given number of seconds. This may
-        be smaller than the intrinsic sample rate of the data. Note that
-        data will be cycliclly rotated, so if you shift by 2 seconds, the
-        final 2 seconds of your data will now be at the beginning of the
-        data set.
+        """Shift the data and timestamps by a given number of seconds
+
+        Shift the data and timestamps in the time domain a given number of 
+        seconds. To just change the time stamps, do ts.start_time += dt. 
+        The time shift may be smaller than the intrinsic sample rate of the data.
+        Note that data will be cycliclly rotated, so if you shift by 2
+        seconds, the final 2 seconds of your data will now be at the 
+        beginning of the data set.
 
         Parameters
         ----------
@@ -568,7 +582,7 @@ def load_frequencyseries(path, group=None):
         data = _numpy.loadtxt(path)
     elif ext == '.hdf':
         key = 'data' if group is None else group
-        f = h5py.File(path)
+        f = h5py.File(path, 'r')
         data = f[key][:]
         series = FrequencySeries(data, delta_f=f[key].attrs['delta_f'],
                                        epoch=f[key].attrs['epoch']) 

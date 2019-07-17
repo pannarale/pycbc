@@ -31,15 +31,15 @@ https://ldas-jobs.ligo.caltech.edu/~cbc/docs/pycbc/ahope/datafind.html
 
 from __future__ import print_function
 import os, copy
-import urlparse
 import logging
-from pycbc_glue import segments, lal
-from pycbc_glue.ligolw import utils, table, lsctables, ligolw
+from ligo import segments
+from glue import lal
+from glue.ligolw import utils, table, lsctables, ligolw
 from pycbc.workflow.core import SegFile, File, FileList, make_analysis_dir
 from pycbc.frame import datafind_connection
 
 class ContentHandler(ligolw.LIGOLWContentHandler):
-        pass
+    pass
 
 lsctables.use_in(ContentHandler)
 
@@ -195,7 +195,7 @@ def setup_datafind_workflow(workflow, scienceSegs, outputDir, seg_file=None,
                 msg += "times."
                 logging.warning(msg)
                 continue
-            if not newScienceSegs.has_key(ifo):
+            if ifo not in newScienceSegs:
                 msg = "No data frames were found corresponding to the science "
                 msg += "segments for ifo %s" %(ifo)
                 logging.error(msg)
@@ -676,29 +676,37 @@ def convert_cachelist_to_filelist(datafindcache_list):
     datafind_filelist : FileList of frame File objects
         The list of frame files.
     """
-    datafind_filelist = FileList([])
     prev_file = None
+    prev_name = None
+    this_name = None
+
+    datafind_filelist = FileList([])
+
     for cache in datafindcache_list:
+        # sort the cache into time sequential order
+        cache.sort()
         curr_ifo = cache.ifo
         for frame in cache:
-            # Don't add a new workflow file entry for this frame if
-            # if is a duplicate. These are assumed to be returned in time
-            # order
-            if prev_file:
-                prev_name = prev_file.cache_entry.url.split('/')[-1]
-                this_name = frame.url.split('/')[-1]
-                if prev_name == this_name:
-                    continue
-
             # Pegasus doesn't like "localhost" in URLs.
             frame.url = frame.url.replace('file://localhost','file://')
 
-            currFile = File(curr_ifo, frame.description,
+            # Create one File() object for each unique frame file that we
+            # get back in the cache.
+            if prev_file:
+                prev_name = os.path.basename(prev_file.cache_entry.url)
+                this_name = os.path.basename(frame.url)
+
+            if (prev_file is None) or (prev_name != this_name):
+                currFile = File(curr_ifo, frame.description,
                     frame.segment, file_url=frame.url, use_tmp_subdirs=True)
+                datafind_filelist.append(currFile)
+                prev_file = currFile
+
+            # Populate the PFNs for the File() we just created
             if frame.url.startswith('file://'):
                 currFile.PFN(frame.url, site='local')
                 if frame.url.startswith(
-                    'file:///cvmfs/oasis.opensciencegrid.org/'):
+                    'file:///cvmfs/oasis.opensciencegrid.org/ligo/frames'):
                     # Datafind returned a URL valid on the osg as well
                     # so add the additional PFNs to allow OSG access.
                     currFile.PFN(frame.url, site='osg')
@@ -711,10 +719,16 @@ def convert_cachelist_to_filelist(datafindcache_list):
                     currFile.PFN(frame.url.replace(
                         'file:///cvmfs/oasis.opensciencegrid.org/',
                         'gsiftp://ldas-grid.ligo.caltech.edu/hdfs/'), site='osg')
+                elif frame.url.startswith(
+                    'file:///cvmfs/gwosc.osgstorage.org/'):
+                    # Datafind returned a URL valid on the osg as well
+                    # so add the additional PFNs to allow OSG access.
+                    for s in ['osg', 'orangegrid', 'osgconnect']:
+                        currFile.PFN(frame.url, site=s)
+                        currFile.PFN(frame.url, site="{}-scratch".format(s))
             else:
                 currFile.PFN(frame.url, site='notlocal')
-            datafind_filelist.append(currFile)
-            prev_file = currFile
+
     return datafind_filelist
 
 
@@ -740,7 +754,7 @@ def get_science_segs_from_datafind_outs(datafindcaches):
         if len(cache) > 0:
             groupSegs = segments.segmentlist(e.segment for e in cache).coalesce()
             ifo = cache.ifo
-            if not newScienceSegs.has_key(ifo):
+            if ifo not in newScienceSegs:
                 newScienceSegs[ifo] = groupSegs
             else:
                 newScienceSegs[ifo].extend(groupSegs)
@@ -780,7 +794,7 @@ def get_missing_segs_from_frame_file_cache(datafindcaches):
             missingSegs = segments.segmentlist(e.segment \
                                          for e in currMissingFrames).coalesce()
             ifo = cache.ifo
-            if not missingFrameSegs.has_key(ifo):
+            if ifo not in missingFrameSegs:
                 missingFrameSegs[ifo] = missingSegs
                 missingFrames[ifo] = lal.Cache(currMissingFrames)
             else:
@@ -831,7 +845,7 @@ def get_segment_summary_times(scienceFile, segmentName):
 
     Returns
     ---------
-    summSegList : glue.segments.segmentlist
+    summSegList : ligo.segments.segmentlist
         The times that are covered in the segment summary table.
     """
     # Parse the segmentName

@@ -25,16 +25,17 @@
 """
 This library code contains functions and classes that are used in the
 generation of pygrb workflows. For details about pycbc.workflow see here:
-http://ligo-cbc.github.io/pycbc/latest/html/workflow.html
+http://pycbc.org/pycbc/latest/html/workflow.html
 """
 
 from __future__ import print_function
 import sys
 import os
 import shutil
-import urlparse, urllib
-from pycbc_glue import segments
-from pycbc_glue.ligolw import ligolw, lsctables, utils, ilwd
+from six.moves.urllib.request import pathname2url
+from six.moves.urllib.parse import urljoin
+from ligo import segments
+from glue.ligolw import ligolw, lsctables, utils, ilwd
 from pycbc.workflow.core import File, FileList, resolve_url
 from pycbc.workflow.jobsetup import select_generic_executable
 
@@ -53,7 +54,7 @@ def set_grb_start_end(cp, start, end):
 
     end : int
     The end of the workflow analysis time.
-    
+
     Returns
     --------
     cp : pycbc.workflow.configuration.WorkflowConfigParser object
@@ -147,9 +148,9 @@ def make_exttrig_file(cp, ifos, sci_seg, out_dir):
     ifos : str
     String containing the analysis interferometer IDs.
 
-    sci_seg : glue.segments.segment
+    sci_seg : ligo.segments.segment
     The science segment for the analysis run.
-    
+
     out_dir : str
     The output directory, destination for xml file.
 
@@ -164,9 +165,9 @@ def make_exttrig_file(cp, ifos, sci_seg, out_dir):
     xmldoc.appendChild(ligolw.LIGO_LW())
     tbl = lsctables.New(lsctables.ExtTriggersTable)
     cols = tbl.validcolumns
-    xmldoc.childNodes[-1].appendChild(tbl)    
+    xmldoc.childNodes[-1].appendChild(tbl)
     row = tbl.appendRow()
-    
+
     # Add known attributes for this GRB
     setattr(row, "event_ra", float(cp.get("workflow", "ra")))
     setattr(row, "event_dec", float(cp.get("workflow", "dec")))
@@ -195,10 +196,10 @@ def make_exttrig_file(cp, ifos, sci_seg, out_dir):
                                                     "trigger-name"))
     xml_file_path = os.path.join(out_dir, xml_file_name)
     utils.write_filename(xmldoc, xml_file_path)
-    xml_file_url = urlparse.urljoin("file:", urllib.pathname2url(xml_file_path))
+    xml_file_url = urljoin("file:", pathname2url(xml_file_path))
     xml_file = File(ifos, xml_file_name, sci_seg, file_url=xml_file_url)
     xml_file.PFN(xml_file_url, site="local")
-    
+
     return xml_file
 
 
@@ -224,8 +225,7 @@ def get_ipn_sky_files(workflow, file_url, tags=None):
     '''
     tags = tags or []
     ipn_sky_points = resolve_url(file_url)
-    sky_points_url = urlparse.urljoin("file:",
-            urllib.pathname2url(ipn_sky_points))
+    sky_points_url = urljoin("file:", pathname2url(ipn_sky_points))
     sky_points_file = File(workflow.ifos, "IPN_SKY_POINTS",
             workflow.analysis_time, file_url=sky_points_url, tags=tags)
     sky_points_file.PFN(sky_points_url, site="local")
@@ -261,7 +261,7 @@ def make_gating_node(workflow, datafind_files, outdir=None, tags=None):
     cp = workflow.cp
     if tags is None:
         tags = []
-    
+
     condition_strain_class = select_generic_executable(workflow,
                                                        "condition_strain")
     condition_strain_nodes = []
@@ -277,3 +277,11 @@ def make_gating_node(workflow, datafind_files, outdir=None, tags=None):
         condition_strain_outs.extend(FileList([condition_strain_out]))
 
     return condition_strain_nodes, condition_strain_outs
+
+
+def get_sky_grid_scale(sky_error, sigma_sys=6.8359):
+    """
+    Calculate suitable 3-sigma radius of the search patch, incorporating Fermi
+    GBM systematic if necessary.
+    """
+    return 1.65 * (sky_error**2 + sigma_sys**2)**0.5

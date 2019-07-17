@@ -21,6 +21,7 @@ import lalframe, logging
 import lal
 import numpy
 import os.path, glob, time
+import glue.datafind
 from pycbc.types import TimeSeries, zeros
 
 
@@ -76,17 +77,33 @@ def _read_channel(channel, stream, start, duration):
     read_func = _fr_type_map[channel_type][0]
     d_type = _fr_type_map[channel_type][1]
     data = read_func(stream, channel, start, duration, 0)
-    return TimeSeries(data.data.data, delta_t=data.deltaT, epoch=start, 
+    return TimeSeries(data.data.data, delta_t=data.deltaT, epoch=start,
                       dtype=d_type)
 
-def locations_to_cache(locations):
+
+def _is_gwf(file_path):
+    """Test if a file is a frame file by checking if its contents begins with
+    the magic string 'IGWD'."""
+    try:
+        with open(file_path, 'rb') as f:
+            if f.read(4) == b'IGWD':
+                return True
+    except IOError:
+        pass
+    return False
+
+
+def locations_to_cache(locations, latest=False):
     """ Return a cumulative cache file build from the list of locations
-    
+
     Parameters
     ----------
     locations : list
         A list of strings containing files, globs, or cache files used to build
     a combined lal cache file object.
+    latest : Optional, {False, Boolean}
+        Only return a cache with the most recent frame in the locations.
+        If false, all results are returned.
 
     Returns
     -------
@@ -96,68 +113,88 @@ def locations_to_cache(locations):
     """
     cum_cache = lal.Cache()
     for source in locations:
-        for file_path in glob.glob(source):
+        flist = glob.glob(source)
+        if latest:
+            def relaxed_getctime(fn):
+                # when building a cache from a directory of temporary
+                # low-latency frames, files might disappear between
+                # the glob() and getctime() calls
+                try:
+                    return os.path.getctime(fn)
+                except OSError:
+                    return 0
+            flist = [max(flist, key=relaxed_getctime)]
+
+        for file_path in flist:
             dir_name, file_name = os.path.split(file_path)
             _, file_extension = os.path.splitext(file_name)
 
             if file_extension in [".lcf", ".cache"]:
                 cache = lal.CacheImport(file_path)
-            elif file_extension == ".gwf": 
-                cache = lalframe.FrOpen(dir_name, file_name).cache
+            elif file_extension == ".gwf" or _is_gwf(file_path):
+                cache = lalframe.FrOpen(str(dir_name), str(file_name)).cache
             else:
                 raise TypeError("Invalid location name")
-                
+
             cum_cache = lal.CacheMerge(cum_cache, cache)
     return cum_cache
 
-def read_frame(location, channels, start_time=None, 
-               end_time=None, duration=None, check_integrity=True):
+def read_frame(location, channels, start_time=None,
+               end_time=None, duration=None, check_integrity=False,
+               sieve=None):
     """Read time series from frame data.
 
-    Using the `location`, which can either be a frame file ".gwf" or a 
+    Using the `location`, which can either be a frame file ".gwf" or a
     frame cache ".gwf", read in the data for the given channel(s) and output
-    as a TimeSeries or list of TimeSeries. 
+    as a TimeSeries or list of TimeSeries.
 
     Parameters
     ----------
     location : string
         A source of gravitational wave frames. Either a frame filename
-        (can include pattern), a list of frame files, or frame cache file.  
+        (can include pattern), a list of frame files, or frame cache file.
     channels : string or list of strings
         Either a string that contains the channel name or a list of channel
         name strings.
     start_time : {None, LIGOTimeGPS}, optional
-        The gps start time of the time series. Defaults to reading from the 
-        beginning of the available frame(s). 
+        The gps start time of the time series. Defaults to reading from the
+        beginning of the available frame(s).
     end_time : {None, LIGOTimeGPS}, optional
         The gps end time of the time series. Defaults to the end of the frame.
         Note, this argument is incompatible with `duration`.
     duration : {None, float}, optional
-        The amount of data to read in seconds. Note, this argument is 
+        The amount of data to read in seconds. Note, this argument is
         incompatible with `end`.
     check_integrity : {True, bool}, optional
         Test the frame files for internal integrity.
+    sieve : string, optional
+        Selects only frames where the frame URL matches the regular
+        expression sieve
 
     Returns
     -------
     Frame Data: TimeSeries or list of TimeSeries
         A TimeSeries or a list of TimeSeries, corresponding to the data from
-        the frame file/cache for a given channel or channels. 
+        the frame file/cache for a given channel or channels.
     """
 
     if end_time and duration:
         raise ValueError("end time and duration are mutually exclusive")
-    
+
     if type(location) is list:
         locations = location
     else:
         locations = [location]
 
-    cum_cache = locations_to_cache(locations)    
+    cum_cache = locations_to_cache(locations)
+    if sieve:
+        logging.info("Using frames that match regexp: %s", sieve)
+        lal.CacheSieve(cum_cache, 0, 0, None, None, sieve)
+
     stream = lalframe.FrStreamCacheOpen(cum_cache)
     stream.mode = lalframe.FR_STREAM_VERBOSE_MODE
-   
-    if check_integrity:     
+
+    if check_integrity:
         stream.mode = (stream.mode | lalframe.FR_STREAM_CHECKSUM_MODE)
 
     lalframe.FrSetMode(stream.mode, stream)
@@ -207,14 +244,14 @@ def read_frame(location, channels, start_time=None,
         return all_data
     else:
         return _read_channel(channels, stream, start_time, duration)
-        
+
 def datafind_connection(server=None):
     """ Return a connection to the datafind server
-    
+
     Parameters
     -----------
     server : {SERVER:PORT, string}, optional
-       A string representation of the server and port. 
+       A string representation of the server and port.
        The port may be ommitted.
 
     Returns
@@ -222,9 +259,6 @@ def datafind_connection(server=None):
     connection
         The open connection to the datafind server.
     """
-    # import inside function to avoid adding M2Crypto
-    # as a general PyCBC requirement
-    import pycbc_glue.datafind
 
     if server:
         datafind_server = server
@@ -240,7 +274,7 @@ def datafind_connection(server=None):
 
     # verify authentication options
     if not datafind_server.endswith("80"):
-        cert_file, key_file = pycbc_glue.datafind.find_credential()
+        cert_file, key_file = glue.datafind.find_credential()
     else:
         cert_file, key_file = None, None
 
@@ -251,46 +285,50 @@ def datafind_connection(server=None):
 
     # Open connection to the datafind server
     if cert_file and key_file:
-        connection = pycbc_glue.datafind.GWDataFindHTTPSConnection(
+        connection = glue.datafind.GWDataFindHTTPSConnection(
                 host=server, port=port, cert_file=cert_file, key_file=key_file)
     else:
-        connection = pycbc_glue.datafind.GWDataFindHTTPConnection(
+        connection = glue.datafind.GWDataFindHTTPConnection(
                 host=server, port=port)
     return connection
-    
-def frame_paths(frame_type, start_time, end_time, server=None):
+
+def frame_paths(frame_type, start_time, end_time, server=None, url_type='file'):
     """Return the paths to a span of frame files
-    
+
     Parameters
     ----------
     frame_type : string
         The string representation of the frame type (ex. 'H1_ER_C00_L1')
     start_time : int
         The start time that we need the frames to span.
-    end_time : int 
+    end_time : int
         The end time that we need the frames to span.
     server : {None, SERVER:PORT string}, optional
         Optional string to specify the datafind server to use. By default an
         attempt is made to use a local datafind server.
-        
+    url_type : string
+        Returns only frame URLs with a particular scheme or head such
+        as "file" or "gsiftp". Default is "file", which queries locally
+        stored frames. Option can be disabled if set to None.
     Returns
     -------
     paths : list of paths
         The list of paths to the frame files.
-    
+
     Examples
     --------
     >>> paths = frame_paths('H1_LDAS_C02_L2', 968995968, 968995968+2048)
     """
     site = frame_type[0]
     connection = datafind_connection(server)
-    connection.find_times(site, frame_type, 
+    connection.find_times(site, frame_type,
                           gpsstart=start_time, gpsend=end_time)
-    cache = connection.find_frame_urls(site, frame_type, start_time, end_time)
+    cache = connection.find_frame_urls(site, frame_type, start_time, end_time,urltype=url_type)
     paths = [entry.path for entry in cache]
-    return paths    
-    
-def query_and_read_frame(frame_type, channels, start_time, end_time):
+    return paths
+
+def query_and_read_frame(frame_type, channels, start_time, end_time,
+                         sieve=None, check_integrity=False):
     """Read time series from frame data.
 
     Query for the locatin of physical frames matching the frame type. Return
@@ -299,25 +337,30 @@ def query_and_read_frame(frame_type, channels, start_time, end_time):
     Parameters
     ----------
     frame_type : string
-        The type of frame file that we are looking for.         
+        The type of frame file that we are looking for.
     channels : string or list of strings
         Either a string that contains the channel name or a list of channel
         name strings.
     start_time : LIGOTimeGPS or int
-        The gps start time of the time series. Defaults to reading from the 
-        beginning of the available frame(s). 
+        The gps start time of the time series. Defaults to reading from the
+        beginning of the available frame(s).
     end_time : LIGOTimeGPS or int
         The gps end time of the time series. Defaults to the end of the frame.
+    sieve : string, optional
+        Selects only frames where the frame URL matches the regular
+        expression sieve
+    check_integrity : boolean
+        Do an expensive checksum of the file before returning.
 
     Returns
     -------
     Frame Data: TimeSeries or list of TimeSeries
         A TimeSeries or a list of TimeSeries, corresponding to the data from
-        the frame file/cache for a given channel or channels. 
-        
+        the frame file/cache for a given channel or channels.
+
     Examples
     --------
-    >>> ts = query_and_read_frame('H1_LDAS_C02_L2', 'H1:LDAS-STRAIN', 
+    >>> ts = query_and_read_frame('H1_LDAS_C02_L2', 'H1:LDAS-STRAIN',
     >>>                               968995968, 968995968+2048)
     """
     # Allows compatibility with our standard tools
@@ -325,16 +368,18 @@ def query_and_read_frame(frame_type, channels, start_time, end_time):
     if frame_type == 'LOSC':
         from pycbc.frame.losc import read_frame_losc
         return read_frame_losc(channels, start_time, end_time)
-    
+
     logging.info('querying datafind server')
-    paths = frame_paths(frame_type, int(start_time), int(end_time))
+    paths = frame_paths(frame_type, int(start_time), int(numpy.ceil(end_time)))
     logging.info('found files: %s' % (' '.join(paths)))
-    return read_frame(paths, channels, 
-                      start_time=start_time, 
-                      end_time=end_time)
-    
-__all__ = ['read_frame', 'frame_paths', 
-           'datafind_connection', 
+    return read_frame(paths, channels,
+                      start_time=start_time,
+                      end_time=end_time,
+                      sieve=sieve,
+                      check_integrity=check_integrity)
+
+__all__ = ['read_frame', 'frame_paths',
+           'datafind_connection',
            'query_and_read_frame']
 
 def write_frame(location, channels, timeseries):
@@ -343,13 +388,13 @@ def write_frame(location, channels, timeseries):
     Parameters
     ----------
     location : string
-        A frame filename.  
+        A frame filename.
     channels : string or list of strings
         Either a string that contains the channel name or a list of channel
         name strings.
     timeseries: TimeSeries
         A TimeSeries or list of TimeSeries, corresponding to the data to be
-        written to the frame file for a given channel. 
+        written to the frame file for a given channel.
     """
     # check if a single channel or a list of channels
     if type(channels) is list and type(timeseries) is list:
@@ -402,7 +447,7 @@ class DataBuffer(object):
     """A linear buffer that acts as a FILO for reading in frame data
     """
 
-    def __init__(self, frame_src, 
+    def __init__(self, frame_src,
                  channel_name,
                  start_time,
                  max_buffer=2048,
@@ -418,7 +463,7 @@ class DataBuffer(object):
         list of frame files, a glob, etc.
         channel_name: str
             Name of the channel to read from the frame files
-        start_time: 
+        start_time:
             Time to start reading from.
         max_buffer: {int, 2048}, Optional
             Length of the buffer in seconds
@@ -442,18 +487,18 @@ class DataBuffer(object):
                                      delta_t=1.0/self.raw_sample_rate)
 
     def update_cache(self):
-        """Reset the lal cache. This can be used to update the cache if the 
-        result may change due to more files being added to the filesystem, 
+        """Reset the lal cache. This can be used to update the cache if the
+        result may change due to more files being added to the filesystem,
         for example.
         """
-        cache = locations_to_cache(self.frame_src)
+        cache = locations_to_cache(self.frame_src, latest=True)
         stream = lalframe.FrStreamCacheOpen(cache)
         self.stream = stream
 
     @staticmethod
     def _retrieve_metadata(stream, channel_name):
         """Retrieve basic metadata by reading the first file in the cache
-    
+
         Parameters
         ----------
         stream: lal stream object
@@ -501,8 +546,8 @@ class DataBuffer(object):
             data = read_func(self.stream, self.channel_name,
                              self.read_pos, int(blocksize), 0)
             return TimeSeries(data.data.data, delta_t=data.deltaT,
-                              epoch=self.read_pos, 
-                              dtype=dtype)     
+                              epoch=self.read_pos,
+                              dtype=dtype)
         except Exception:
             raise RuntimeError('Cannot read {0} frame data'.format(self.channel_name))
 
@@ -515,7 +560,7 @@ class DataBuffer(object):
             The number of seconds to attempt to read from the channel
         """
         self.raw_buffer.roll(-int(blocksize * self.raw_sample_rate))
-        self.read_pos += blocksize       
+        self.read_pos += blocksize
         self.raw_buffer.start_time += blocksize
 
     def advance(self, blocksize):
@@ -530,11 +575,11 @@ class DataBuffer(object):
         ts = self._read_frame(blocksize)
 
         self.raw_buffer.roll(-len(ts))
-        self.raw_buffer[-len(ts):] = ts[:] 
+        self.raw_buffer[-len(ts):] = ts[:]
         self.read_pos += blocksize
         self.raw_buffer.start_time += blocksize
         return ts
-        
+
     def update_cache_by_increment(self, blocksize):
         """Update the internal cache by starting from the first frame
         and incrementing.
@@ -550,25 +595,25 @@ class DataBuffer(object):
         """
         start = float(self.raw_buffer.end_time)
         end = float(start + blocksize)
-        
-        if not hasattr(self, 'dur'):       
+
+        if not hasattr(self, 'dur'):
             fname = glob.glob(self.frame_src[0])[0]
             fname = os.path.splitext(os.path.basename(fname))[0].split('-')
-            
+
             self.beg = '-'.join([fname[0], fname[1]])
             self.ref = int(fname[2])
             self.dur = int(fname[3])
-        
+
         fstart = int(self.ref + numpy.floor((start - self.ref) / float(self.dur)) * self.dur)
         starts = numpy.arange(fstart, end, self.dur).astype(numpy.int)
-        
+
         keys = []
         for s in starts:
             pattern = self.increment_update_cache
             if 'GPS' in pattern:
                 n = int(pattern[int(pattern.index('GPS') + 3)])
                 pattern = pattern.replace('GPS%s' % n, str(s)[0:n])
-                
+
             name = '%s/%s-%s-%s.gwf' % (pattern, self.beg, s, self.dur)
             # check that file actually exists, else abort now
             if not os.path.exists(name):
@@ -600,7 +645,7 @@ class DataBuffer(object):
         """
         if self.force_update_cache:
             self.update_cache()
-        
+
         try:
             if self.increment_update_cache:
                 self.update_cache_by_increment(blocksize)
@@ -620,7 +665,7 @@ class DataBuffer(object):
 
 class StatusBuffer(DataBuffer):
 
-    """ Read state vector information from a frame file """
+    """ Read state vector or DQ information from a frame file """
 
     def __init__(self, frame_src,
                        channel_name,
@@ -628,22 +673,26 @@ class StatusBuffer(DataBuffer):
                        max_buffer=2048,
                        valid_mask=3,
                        force_update_cache=False,
-                       increment_update_cache=None):
+                       increment_update_cache=None,
+                       valid_on_zero=False):
         """ Create a rolling buffer of status data from a frame
 
         Parameters
         ---------
         frame_src: str of list of strings
             Strings that indicate where to read from files from. This can be a
-        list of frame files, a glob, etc.
+            list of frame files, a glob, etc.
         channel_name: str
             Name of the channel to read from the frame files
-        start_time: 
+        start_time:
             Time to start reading from.
         max_buffer: {int, 2048}, Optional
             Length of the buffer in seconds
         valid_mask: {int, HOFT_OK | SCIENCE_INTENT}, Optional
             Set of flags that must be on to indicate valid frame data.
+        valid_on_zero: bool
+            If True, `valid_mask` is ignored and the status is considered
+            "good" simply when the channel is zero.
         """
         DataBuffer.__init__(self, frame_src, channel_name, start_time,
                             max_buffer=max_buffer,
@@ -651,6 +700,7 @@ class StatusBuffer(DataBuffer):
                             increment_update_cache=increment_update_cache,
                             dtype=numpy.int32)
         self.valid_mask = valid_mask
+        self.valid_on_zero = valid_on_zero
 
     def check_valid(self, values, flag=None):
         """Check if the data contains any non-valid status information
@@ -668,13 +718,13 @@ class StatusBuffer(DataBuffer):
             Returns True if all of the status information if valid,
              False if any is not.
         """
-        if flag is None:
-            flag = self.valid_mask
-
-        if numpy.any(numpy.bitwise_and(values.numpy(), flag) != flag):
-            return False
+        if self.valid_on_zero:
+            valid = values.numpy() == 0
         else:
-            return True
+            if flag is None:
+                flag = self.valid_mask
+            valid = numpy.bitwise_and(values.numpy(), flag) == flag
+        return bool(numpy.all(valid))
 
     def is_extent_valid(self, start_time, duration, flag=None):
         """Check if the duration contains any non-valid frames
@@ -702,7 +752,7 @@ class StatusBuffer(DataBuffer):
 
     def indices_of_flag(self, start_time, duration, times, padding=0):
         """ Return the indices of the times lying in the flagged region
-        
+
         Parameters
         ----------
         start_time: int
@@ -712,20 +762,25 @@ class StatusBuffer(DataBuffer):
         padding: float
             Number of seconds to add around flag inactive times to be considered
         inactive as well.
-        
+
         Returns
         -------
         indices: numpy.ndarray
             Array of indices marking the location of triggers within valid
         time.
-        """ 
+        """
         from pycbc.events.veto import indices_outside_times
         sr = self.raw_buffer.sample_rate
         s = int((start_time - self.raw_buffer.start_time - padding) * sr) - 1
         e = s + int((duration + padding) * sr) + 1
         data = self.raw_buffer[s:e]
         stamps = data.sample_times.numpy()
-        invalid = numpy.bitwise_and(data.numpy(), self.valid_mask) != self.valid_mask
+
+        if self.valid_on_zero:
+            invalid = data.numpy() != 0
+        else:
+            invalid = numpy.bitwise_and(data.numpy(), self.valid_mask) \
+                    != self.valid_mask
 
         starts = stamps[invalid] - padding
         ends = starts + 1.0 / sr + padding * 2.0

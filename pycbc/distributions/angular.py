@@ -16,12 +16,10 @@
 This modules provides classes for evaluating angular distributions.
 """
 
+from six.moves.configparser import Error
 import numpy
-try:
-    from ConfigParser import Error
-except ImportError:
-    from configparser import Error
-from pycbc.distributions import boundaries
+from pycbc import VARARGS_DELIM
+from pycbc import boundaries
 from pycbc.distributions import bounded
 from pycbc.distributions import uniform
 
@@ -29,7 +27,7 @@ from pycbc.distributions import uniform
 class UniformAngle(uniform.Uniform):
     """A uniform distribution in which the dependent variable is between
     `[0,2pi)`.
-    
+
     The domain of the distribution may optionally be made cyclic using the
     `cyclic_domain` parameter.
 
@@ -161,7 +159,7 @@ class UniformAngle(uniform.Uniform):
             Name of the section in the configuration file.
         variable_args : str
             The names of the parameters for this distribution, separated by
-            `prior.VARARGS_DELIM`. These must appear in the "tag" part
+            ``VARARGS_DELIM``. These must appear in the "tag" part
             of the section header.
 
         Returns
@@ -226,6 +224,15 @@ class SinAngle(UniformAngle):
             abs(self._func(bnd[1]) - self._func(bnd[0]))) \
             for bnd in self._bounds.values()])
         self._norm = numpy.exp(self._lognorm)
+
+    def cdfinv(self, arg, value):
+        """Return inverse of cdf for mapping unit interval to parameter bounds.
+        """
+        scale = (numpy.cos(self._bounds[arg][0])
+                 - numpy.cos(self._bounds[arg][1]))
+        offset = 1. + numpy.cos(self._bounds[arg][1]) / scale
+        new_value = numpy.arccos(-scale * (value - offset))
+        return new_value
 
     def _pdf(self, **kwargs):
         """Returns the pdf at the given values. The keyword arguments must
@@ -311,6 +318,14 @@ class CosAngle(SinAngle):
     _arcfunc = numpy.arcsin
     _domainbounds = (-numpy.pi/2, numpy.pi/2)
 
+    def cdfinv(self, param, value):
+        a = self._bounds[param][0]
+        b = self._bounds[param][1]
+        scale = numpy.sin(b) - numpy.sin(a)
+        offset = 1. - numpy.sin(b)/(numpy.sin(b) - numpy.sin(a))
+        new_value = numpy.arcsin((value - offset) * scale)
+        return new_value
+
 
 class UniformSolidAngle(bounded.BoundedDist):
     """A distribution that is uniform in the solid angle of a sphere. The names
@@ -370,7 +385,7 @@ class UniformSolidAngle(bounded.BoundedDist):
         if azimuthal_angle is None:
             azimuthal_angle = self._default_azimuthal_angle
         self._polardist = self._polardistcls(**{
-            polar_angle: polar_bounds}) 
+            polar_angle: polar_bounds})
         self._azimuthaldist = self._azimuthaldistcls(**{
             azimuthal_angle: azimuthal_bounds,
             'cyclic_domain': azimuthal_cyclic_domain})
@@ -390,11 +405,16 @@ class UniformSolidAngle(bounded.BoundedDist):
     def azimuthal_angle(self):
         return self._azimuthal_angle
 
+    def cdfinv(self, param, value):
+        if param == self.polar_angle:
+            return self._polardist.cdfinv(param, value)
+        elif param == self.azimuthal_angle:
+            return self._azimuthaldist.cdfinv(param, value)
 
     def apply_boundary_conditions(self, **kwargs):
         """Maps the given values to be within the domain of the azimuthal and
         polar angles, before applying any other boundary conditions.
-        
+
         Parameters
         ----------
         \**kwargs :
@@ -437,7 +457,7 @@ class UniformSolidAngle(bounded.BoundedDist):
         """
         return self._polardist._pdf(**kwargs) * \
             self._azimuthaldist._pdf(**kwargs)
-        
+
 
     def _logpdf(self, **kwargs):
         """
@@ -507,7 +527,7 @@ class UniformSolidAngle(bounded.BoundedDist):
         If nothing else is provided, the default names and bounds of the polar
         and azimuthal angles will be used. To specify a different name for
         each angle, set the `polar-angle` and `azimuthal-angle` attributes. For
-        example: 
+        example:
 
         .. code-block:: ini
 
@@ -515,7 +535,7 @@ class UniformSolidAngle(bounded.BoundedDist):
             name = uniform_solidangle
             polar-angle = foo
             azimuthal-angle = bar
-        
+
         Note that the names of the variable args in the tag part of the section
         name must match the names of the polar and azimuthal angles.
 
@@ -544,7 +564,7 @@ class UniformSolidAngle(bounded.BoundedDist):
             The name of the section.
         variable_args : str
             The names of the parameters for this distribution, separated by
-            `prior.VARARGS_DELIM`. These must appear in the "tag" part
+            ``VARARGS_DELIM``. These must appear in the "tag" part
             of the section header.
 
         Returns
@@ -553,7 +573,7 @@ class UniformSolidAngle(bounded.BoundedDist):
             A distribution instance from the pycbc.inference.prior module.
         """
         tag = variable_args
-        variable_args = variable_args.split(bounded.VARARGS_DELIM)
+        variable_args = variable_args.split(VARARGS_DELIM)
 
         # get the variables that correspond to the polar/azimuthal angles
         try:

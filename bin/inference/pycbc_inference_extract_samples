@@ -24,8 +24,9 @@
 #
 # =============================================================================
 #
-"""Extracts some or all samples from an InferenceFile, writing results to a new
-InferenceFile.
+"""Extracts posterior samples from a Sampler HDF file, writing to a
+posterior HDF file. Parameters can be renamed in the output file using the
+--parameters option.
 """
 
 import os
@@ -33,59 +34,23 @@ import argparse
 import logging
 import numpy
 import pycbc
-from pycbc.inference import option_utils
-from pycbc.io.inference_hdf import InferenceFile
+from pycbc.inference.io import (ResultsArgumentParser, results_from_cli,
+                                PosteriorFile, loadfile)
 
-parser = argparse.ArgumentParser(description=__doc__)
+parser = ResultsArgumentParser(defaultparams='all', autoparamlabels=False,
+                               description=__doc__)
 
-parser.add_argument("--input-file", type=str, required=True,
-    help="Path to input HDF file.")
 parser.add_argument("--output-file", type=str, required=True,
                     help="Output file to create.")
 parser.add_argument("--force", action="store_true", default=False,
                     help="If the output-file already exists, overwrite it. "
                          "Otherwise, an IOError is raised.")
-parser.add_argument("--posterior-only", action="store_true", default=False,
-                    help="Write copied parameter samples and likelihood stats "
-                         "as flattened arrays. For example, if the sampler "
-                         "wrote a parameter's samples to "
-                         "{samples_group}/{param}/walker{x}/, then the "
-                         "copied file will have all selected samples from "
-                         "all walkers in {samples_group/{param}/. Default is "
-                         "for the copied file to have the same structure "
-                         "as the input file.")
-# options for down selecting parameters
-parser.add_argument("--parameters", type=str, nargs="+",
-    metavar="PARAM[:NAME]",
-    help="Name of parameters to copy. If none provided will copy all of "
-         "the variable_args in the input file. If provided, the "
-         "parameters can be any of the variable args in "
-         "the input file, derived parameters from them, or any function "
-         "of them. Syntax for functions is python; any math functions in "
-         "the numpy libary may be used. Can optionally also specify a "
-         "name for each parameter, in which case the parameter will be "
-         "saved with the given name in the output file.")
-parser.add_argument("--thin-start", type=int, default=None,
-    help="Sample number to start collecting samples to plot. If none "
-         "provided, will start at the end of the burn-in.")
-parser.add_argument("--thin-interval", type=int,
-    default=None,
-    help="Interval to use for thinning samples. If none provided, will "
-         "use the auto-correlation length found in the file.")
-parser.add_argument("--thin-end", type=int, default=None,
-    help="Sample number to stop collecting samples to plot. If none "
-         "provided, will stop at the last sample from the sampler.")
-parser.add_argument("--iteration", type=int, default=None,
-    help="Only retrieve the given iteration. To load the last n-th sampe "
-         "use -n, e.g., -1 will load the last iteration. This overrides "
-         "the thin-start/interval/end options.")
-# add additional, sampler-specific options
-parser.add_argument("--temperature", nargs='+',
-                    help="For parallel-tempered samplers, which temperature "
-                         "chain(s) to extract. Options are 'all', or one or "
-                         "more indices indicating the temperature chain "
-                         "(0 = coldest). Default is to only extract from "
-                         "the coldest chain. ")
+parser.add_argument("--skip-groups", default=None, nargs="+",
+                    help="Don't write the specified groups in the output "
+                         "(aside from samples; samples are always written), "
+                         "for example, 'sampler_info'. If 'all' write skip "
+                         "all groups, only writing the samples. Default is "
+                         "to write all groups.")
 parser.add_argument("--verbose", action="store_true", default=False,
                     help="Be verbose")
 
@@ -98,27 +63,42 @@ if os.path.exists(opts.output_file) and not opts.force:
     raise IOError("output file already exists; use --force if you wish to "
                   "overwrite.")
 
-# add any sampler specific options
-sampler_kwargs = {}
-if opts.temperature is not None:
-    temps = opts.temperature
-    if temps == ['all']:
-        temps = temps[0]
-    else:
-        temps = map(int, temps)
-    sampler_kwargs['temps'] = temps
+# load the samples
+fp, params, labels, samples = results_from_cli(opts)
 
-# open the input and parse parameters
-source = InferenceFile(opts.input_file)
-parameters, pnames = option_utils.parse_parameters_opt(opts.parameters)
+# convert samples to a dict in which the keys are the labels
+samples = {labels[p]: samples[p] for p in params}
 
-# copy to output
-target = source.copy(opts.output_file, parameters=parameters,
-                     parameter_names=pnames,
-                     posterior_only=opts.posterior_only,
-                     thin_start=opts.thin_start, thin_end=opts.thin_end,
-                     thin_interval=opts.thin_interval,
-                     iteration=opts.iteration,
-                     **sampler_kwargs) 
+# create the file
+outtype = PosteriorFile.name
+out = loadfile(opts.output_file, 'w', filetype=outtype) 
 
-target.close()
+# write the samples
+out.write_samples(samples)
+
+# Preserve samples group metadata
+for key, val in fp[fp.samples_group].attrs.items():
+    out[out.samples_group].attrs[key] = val
+
+# Preserve top-level metadata...
+# ...except for: the filetype, since that's set when the file was loaded;
+# the automatic thinning settings, since those will no longer make sense
+skip_attrs = ['filetype', 'thin_start', 'thin_interval', 'thin_end',
+              'thinned_by']
+for key in fp.attrs:
+    if key not in skip_attrs:
+        out.attrs[key] = fp.attrs[key]
+
+# store what parameters were renamed
+out.attrs['remapped_params'] = list(labels.items())
+
+# write the other groups
+skip_groups = opts.skip_groups
+if skip_groups is not None and 'all' in opts.skip_groups:
+    skip_groups = [group for group in fp.keys()
+                   if group != fp.samples_group]
+fp.copy_info(out, ignore=skip_groups)
+
+# close and exit
+fp.close()
+out.close()

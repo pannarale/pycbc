@@ -176,6 +176,15 @@ class UniformPowerLaw(bounded.BoundedDist):
             arr[p] = numpy.power(factor * arr[p] + offset, 1.0 / self.dim)
         return arr
 
+    def cdfinv(self, param, value):
+        """Return inverse of cdf to map unit interval to parameter bounds.
+        """
+        n = self.dim - 1
+        r_l = self._bounds[param][0]
+        r_h = self._bounds[param][1]
+        new_value = ((r_h**(n+1) - r_l**(n+1))*value + r_l**(n+1))**(1./(n+1))
+        return new_value
+
     def _pdf(self, **kwargs):
         """Returns the pdf at the given values. The keyword arguments must
         contain all of parameters in self's params. Unrecognized arguments are
@@ -240,7 +249,7 @@ class UniformPowerLaw(bounded.BoundedDist):
 
 class UniformRadius(UniformPowerLaw):
     """ For a uniform distribution in volume using spherical coordinates, this
--   is the distriubtion to use for the radius.
+    is the distriubtion to use for the radius.
 
     For more details see UniformPowerLaw.
     """

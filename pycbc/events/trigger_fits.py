@@ -48,7 +48,6 @@ ks_stat, ks_pval = KS_test('exponential', snrs, alpha, thresh)
 from __future__ import division
 import numpy
 from scipy.stats import kstest
-from pycbc import pnutils
 
 fitalpha_dict = {
     'exponential' : lambda vals, thresh : 1. / (numpy.mean(vals) - thresh),
@@ -101,8 +100,8 @@ def fit_above_thresh(distr, vals, thresh=None):
 
 fitfn_dict = {
     'exponential' : lambda x, alpha, t : alpha * numpy.exp(-alpha * (x - t)),
-    'rayleigh' : lambda x, alpha, t : alpha * x * \
-                                      numpy.exp(-alpha * (x**2. - t**2.) / 2.),
+    'rayleigh' : lambda x, alpha, t : (alpha * x * \
+                                       numpy.exp(-alpha * (x**2 - t**2) / 2.)),
     'power' : lambda x, alpha, t : (alpha - 1.) * x**(-alpha) * t**(alpha - 1.)
 }
 
@@ -211,65 +210,6 @@ def KS_test(distr, vals, alpha, thresh=None):
     def cdf_fn(x):
         return 1 - cum_fndict[distr](x, alpha, thresh)
     return kstest(vals, cdf_fn)
-
-
-def get_masses(bank, tid):
-    """
-    Helper function
-
-    Parameters
-    ----------
-    bank : h5py File object
-        Bank parameter file
-    tid : integer or array of int
-        Indices of the entries to be returned
-
-    Returns
-    -------
-    m1, m2, s1z, s2z : tuple of floats or arrays of floats
-        Parameter values of the bank entries
-    """
-    m1 = bank['mass1'][:][tid]
-    m2 = bank['mass2'][:][tid]
-    s1z = bank['spin1z'][:][tid]
-    s2z = bank['spin2z'][:][tid]
-    return m1, m2, s1z, s2z
-
-
-def get_param(par, args, m1, m2, s1z, s2z):
-    """
-    Helper function
-
-    Parameters
-    ----------
-    par : string
-        Name of parameter to calculate
-    args : Namespace object returned from ArgumentParser instance
-        Calling code command line options, used for f_lower value
-    m1 : float or array of floats
-        First binary component mass (etc.)
-
-    Returns
-    -------
-    parvals : float or array of floats
-        Calculated parameter values
-    """
-    if par == 'mchirp':
-        parvals, _ = pnutils.mass1_mass2_to_mchirp_eta(m1, m2)
-    elif par == 'mtotal':
-        parvals = m1 + m2
-    elif par == 'template_duration':
-        # default to SEOBNRv4 duration function
-        parvals = pnutils.get_imr_duration(m1, m2, s1z, s2z, args.f_lower,
-                                           args.approximant or "SEOBNRv4")
-        if args.min_duration:
-            parvals += args.min_duration
-    elif par in pnutils.named_frequency_cutoffs.keys():
-        parvals = pnutils.frequency_cutoff_from_name(par, m1, m2, s1z, s2z)
-    else:
-        # try asking for a LALSimulation frequency function
-        parvals = pnutils.get_freq(par, m1, m2, s1z, s2z)
-    return parvals
 
 
 def which_bin(par, minpar, maxpar, nbins, log=False):

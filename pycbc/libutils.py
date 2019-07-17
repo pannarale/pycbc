@@ -40,7 +40,7 @@ def pkg_config(pkg_libraries):
            libraries(list), library_dirs(list), include_dirs(list)
     """
     libraries=[]
-    library_dirs=[] 
+    library_dirs=[]
     include_dirs=[]
 
     # Check that we have the packages
@@ -69,13 +69,13 @@ def pkg_config_header_strings(pkg_libraries):
     """ Returns a list of header strings that could be passed to a compiler
     """
     _, _, header_dirs = pkg_config(pkg_libraries)
-  
+
     header_strings = []
 
     for header_dir in header_dirs:
         header_strings.append("-I" + header_dir)
 
-    return header_strings        
+    return header_strings
 
 def pkg_config_check_exists(package):
     return (os.system('pkg-config --exists {0} 2>/dev/null'.format(package)) == 0)
@@ -131,7 +131,10 @@ def get_libpath_from_dirlist(libname, dirs):
         # Our directory might be no good, so try/except
         try:
             for libfile in os.listdir(nextdir):
-                if fnmatch.fnmatch(libfile,'lib'+libname+'.so*') or fnmatch.fnmatch(libfile,'lib'+libname+'.dylib*') or fnmatch.fnmatch(libfile,libname+'.dll') or fnmatch.fnmatch(libfile,'cyg'+libname+'-*.dll'):
+                if fnmatch.fnmatch(libfile,'lib'+libname+'.so*') or \
+                        fnmatch.fnmatch(libfile,'lib'+libname+'.dylib*') or \
+                        fnmatch.fnmatch(libfile,libname+'.dll') or \
+                        fnmatch.fnmatch(libfile,'cyg'+libname+'-*.dll'):
                     possible.append(libfile)
         except OSError:
             pass

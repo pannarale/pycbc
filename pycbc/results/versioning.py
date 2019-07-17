@@ -21,8 +21,8 @@ import os
 import subprocess
 from pycbc.results import save_fig_with_metadata, html_escape
 
-import lal, lalframe, lalmetaio, lalinspiral, lalsimulation
-import pycbc_glue.git_version, pycbc.version
+import lal, lalframe, lalsimulation
+import pycbc.version, glue.git_version
 
 def get_library_version_info():
     """This will return a list of dictionaries containing versioning
@@ -71,36 +71,6 @@ def get_library_version_info():
         add_info_new_version(lalframeinfo, lalframe, 'Frame')
     library_list.append(lalframeinfo)
 
-    lalmetaioinfo = {}
-    lalmetaioinfo['Name'] = 'LALMetaIO'
-    try:
-        lalmetaioinfo['ID'] = lalmetaio.MetaIOVCSId
-        lalmetaioinfo['Status'] = lalmetaio.MetaIOVCSStatus
-        lalmetaioinfo['Version'] = lalmetaio.MetaIOVCSVersion
-        lalmetaioinfo['Tag'] = lalmetaio.MetaIOVCSTag
-        lalmetaioinfo['Author'] = lalmetaio.MetaIOVCSAuthor
-        lalmetaioinfo['Branch'] = lalmetaio.MetaIOVCSBranch
-        lalmetaioinfo['Committer'] = lalmetaio.MetaIOVCSCommitter
-        lalmetaioinfo['Date'] = lalmetaio.MetaIOVCSDate
-    except AttributeError:
-        add_info_new_version(lalmetaioinfo, lalmetaio, 'MetaIO')
-    library_list.append(lalmetaioinfo)
-
-    lalinspiralinfo = {}
-    lalinspiralinfo['Name'] = 'LALInspiral'
-    try:
-        lalinspiralinfo['ID'] = lalinspiral.InspiralVCSId
-        lalinspiralinfo['Status'] = lalinspiral.InspiralVCSStatus
-        lalinspiralinfo['Version'] = lalinspiral.InspiralVCSVersion
-        lalinspiralinfo['Tag'] = lalinspiral.InspiralVCSTag
-        lalinspiralinfo['Author'] = lalinspiral.InspiralVCSAuthor
-        lalinspiralinfo['Branch'] = lalinspiral.InspiralVCSBranch
-        lalinspiralinfo['Committer'] = lalinspiral.InspiralVCSCommitter
-        lalinspiralinfo['Date'] = lalinspiral.InspiralVCSDate
-    except AttributeError:
-        add_info_new_version(lalinspiralinfo, lalinspiral, 'Inspiral')
-    library_list.append(lalinspiralinfo)
-
     lalsimulationinfo = {}
     lalsimulationinfo['Name'] = 'LALSimulation'
     try:
@@ -117,16 +87,16 @@ def get_library_version_info():
     library_list.append(lalsimulationinfo)
 
     glueinfo = {}
-    glueinfo['Name'] = 'PyCBC-Glue'
-    glueinfo['ID'] = pycbc_glue.git_version.id
-    glueinfo['Status'] = pycbc_glue.git_version.status
-    glueinfo['Version'] = pycbc_glue.git_version.version
-    glueinfo['Tag'] = pycbc_glue.git_version.tag
-    glueinfo['Author'] = pycbc_glue.git_version.author
-    glueinfo['Builder'] = pycbc_glue.git_version.builder
-    glueinfo['Branch'] = pycbc_glue.git_version.branch
-    glueinfo['Committer'] = pycbc_glue.git_version.committer
-    glueinfo['Date'] = pycbc_glue.git_version.date
+    glueinfo['Name'] = 'LSCSoft-Glue'
+    glueinfo['ID'] = glue.git_version.id
+    glueinfo['Status'] = glue.git_version.status
+    glueinfo['Version'] = glue.git_version.version
+    glueinfo['Tag'] = glue.git_version.tag
+    glueinfo['Author'] = glue.git_version.author
+    glueinfo['Builder'] = glue.git_version.builder
+    glueinfo['Branch'] = glue.git_version.branch
+    glueinfo['Committer'] = glue.git_version.committer
+    glueinfo['Date'] = glue.git_version.date
     library_list.append(glueinfo)
 
     pycbcinfo = {}
@@ -173,7 +143,7 @@ def get_code_version_numbers(cp):
         _, exe_name = os.path.split(value)
         version_string = None
         if value.startswith('gsiftp://') or value.startswith('http://'):
-           code_version_dict[exe_name] = "Using bundle downloaded from %s" % value
+            code_version_dict[exe_name] = "Using bundle downloaded from %s" % value
         else:
             try:
                 if value.startswith('file://'):
@@ -191,7 +161,15 @@ def write_code_versions(path, cp):
     code_version_dict = get_code_version_numbers(cp)
     html_text = ''
     for key,value in code_version_dict.items():
-        html_text+= '<li><b>%s</b>:<br><pre>%s</pre></li><hr><br><br>\n' %(key,value.replace('@', '&#64;'))
+        # value might be a str or a bytes object in python3. python2 is happy
+        # to combine these objects (or uniocde and str, their equivalents)
+        # but python3 is not.
+        try:
+            value = value.decode()
+        except AttributeError:
+            pass
+        html_text+= '<li><b>%s</b>:<br><pre>%s</pre></li><hr><br><br>\n' \
+            % (key, str(value).replace('@', '&#64;'))
     kwds = {'render-function' : 'render_text',
             'title' : 'Version Information from Executables',
     }

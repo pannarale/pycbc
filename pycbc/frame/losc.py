@@ -16,21 +16,31 @@
 """
 This modules contains functions for getting data from the LOSC
 """
+from astropy.utils.data import download_file
 
 _losc_url = "https://losc.ligo.org/archive/links/%s/%s/%s/%s/json/"
 
-def _get_run(time):
-    if 815011213 < time < 875318414:
+def get_run(time):
+    if 1164556817 <= time <= 1187733618:
+        return 'O2_16KHZ_R1'
+    if 1126051217 <= time <= 1137254417:
+        return 'O1'
+    elif 815011213 <= time <= 875318414:
         return 'S5'
-    elif 930787215 < time < 971568015:
+    elif 930787215 <= time <= 971568015:
         return 'S6'
     else:
         raise ValueError('Time %s not available in a public dataset' % time)
-    
+
+def _get_channel(time):
+    if 1164556817 <= time <= 1187733618:
+        return 'GWOSC-16KHZ_R1_STRAIN'
+    else:
+        return 'LOSC-STRAIN'
 
 def losc_frame_json(ifo, start_time, end_time):
     """ Get the information about the public data files in a duration of time
-    
+
     Parameters
     ----------
     ifo: str
@@ -39,32 +49,37 @@ def losc_frame_json(ifo, start_time, end_time):
         The gps time in GPS seconds
     end_time: int
         The end time in GPS seconds
-    
+
     Returns
     -------
     info: dict
         A dictionary containing information about the files that span the
         requested times.
     """
-    import urllib, json
-    run = _get_run(start_time)
-    run2 = _get_run(end_time)
+    import json
+    try:
+        from urllib.request import urlopen
+    except ImportError:  # python < 3
+        from urllib import urlopen
+    run = get_run(start_time)
+    run2 = get_run(end_time)
     if run != run2:
         raise ValueError('Spanning multiple runs is not currently supported.'
                          'You have requested data that uses '
                          'both %s and %s' % (run, run2))
-    
+
     url = _losc_url % (run, ifo, int(start_time), int(end_time))
-    
+
     try:
-        return json.loads(urllib.urlopen(url).read())
-    except Exception:
+        return json.loads(urlopen(url).read().decode())
+    except Exception as e:
+        print(e)
         raise ValueError('Failed to find gwf files for '
             'ifo=%s, run=%s, between %s-%s' % (ifo, run, start_time, end_time))
-           
+
 def losc_frame_urls(ifo, start_time, end_time):
     """ Get a list of urls to losc frame files
-    
+
     Parameters
     ----------
     ifo: str
@@ -73,7 +88,7 @@ def losc_frame_urls(ifo, start_time, end_time):
         The gps time in GPS seconds
     end_time: int
         The end time in GPS seconds
-    
+
     Returns
     -------
     frame_files: list
@@ -82,7 +97,7 @@ def losc_frame_urls(ifo, start_time, end_time):
     """
     data = losc_frame_json(ifo, start_time, end_time)['strain']
     return [d['url'] for d in data if d['format'] == 'gwf']
-    
+
 def read_frame_losc(channels, start_time, end_time):
     """ Read channels from losc data
 
@@ -94,13 +109,12 @@ def read_frame_losc(channels, start_time, end_time):
         The gps time in GPS seconds
     end_time: int
         The end time in GPS seconds
-      
+
     Returns
     -------
     ts: TimeSeries
         Returns a timeseries or list of timeseries with the requested data.
-    """    
-    import urllib
+    """
     from pycbc.frame import read_frame
     if not isinstance(channels, list):
         channels = [channels]
@@ -111,20 +125,20 @@ def read_frame_losc(channels, start_time, end_time):
         if len(urls[ifo]) == 0:
             raise ValueError("No data found for %s so we "
                              "can't produce a time series" % ifo)
-                             
+
     fnames = {ifo:[] for ifo in ifos}
     for ifo in ifos:
         for url in urls[ifo]:
-            fname, _ = urllib.urlretrieve(url)
+            fname = download_file(url, cache=True)
             fnames[ifo].append(fname)
-    
+
     ts = [read_frame(fnames[channel[0:2]], channel,
            start_time=start_time, end_time=end_time) for channel in channels]
     if len(ts) == 1:
         return ts[0]
     else:
         return ts
-           
+
 def read_strain_losc(ifo, start_time, end_time):
     """ Get the strain data from the LOSC data
 
@@ -136,11 +150,12 @@ def read_strain_losc(ifo, start_time, end_time):
         The gps time in GPS seconds
     end_time: int
         The end time in GPS seconds
-      
+
     Returns
     -------
     ts: TimeSeries
         Returns a timeseries with the strain data.
-    """   
-    return read_frame_losc('%s:LOSC-STRAIN' % ifo, start_time, end_time)
-    
+    """
+    channel = _get_channel(start_time)
+    return read_frame_losc('%s:%s' % (ifo, channel), start_time, end_time)
+

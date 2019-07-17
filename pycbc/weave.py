@@ -22,9 +22,11 @@ import os.path, sys
 import logging
 import shutil, atexit, signal
 import fcntl
-import weave.inline_tools as inline_tools
+from six import PY3
 
-_compile_function = inline_tools.compile_function
+if not PY3:
+    import weave.inline_tools as inline_tools
+    _compile_function = inline_tools.compile_function
 
 ## Blatently taken from weave to implement a crude file locking scheme
 def pycbc_compile_function(code,arg_names,local_dict,global_dict,
@@ -49,7 +51,7 @@ def pycbc_compile_function(code,arg_names,local_dict,global_dict,
     lockfile = open(lockfile_name, 'w')
     fcntl.lockf(lockfile, fcntl.LOCK_EX)
     logging.info("we have aquired the lock")
-    
+
     func = _compile_function(code,arg_names, local_dict, global_dict,
                      module_dir, compiler, verbose,
                      support_code, headers, customize,
@@ -61,12 +63,18 @@ def pycbc_compile_function(code,arg_names,local_dict,global_dict,
 
     return func
 
-inline_tools.compile_function = pycbc_compile_function
+if not PY3:
+    inline_tools.compile_function = pycbc_compile_function
+    from weave import inline
+else:
+    def inline(*args, **kwds):
+        raise RuntimeError("Oh no! You tried to use capabilities"
+                           " we haven't ported to python3 yet")
 
 def insert_weave_option_group(parser):
     """
     Adds the options used to specify weave options.
-    
+
     Parameters
     ----------
     parser : object
@@ -74,7 +82,7 @@ def insert_weave_option_group(parser):
     """
     optimization_group = parser.add_argument_group("Options for controlling "
                                    "weave")
-    
+
     optimization_group.add_argument("--per-process-weave-cache",
                     action="store_true",
                     default=False,
@@ -83,13 +91,13 @@ def insert_weave_option_group(parser):
                          several instances may be starting on the same machine at
                          the same time.""")
 
-    optimization_group.add_argument("--clear-weave-cache-at-start", 
+    optimization_group.add_argument("--clear-weave-cache-at-start",
                     action="store_true",
                     default=False,
                     help="If given, delete the contents of the weave cache "
                          "when the process starts")
 
-    optimization_group.add_argument("--clear-weave-cache-at-end", 
+    optimization_group.add_argument("--clear-weave-cache-at-end",
                     action="store_true",
                     default=False,
                     help="If given, delete the contents of the weave cache "
@@ -111,14 +119,14 @@ def _clear_weave_cache():
 
 
 def verify_weave_options(opt, parser):
-    """Parses the CLI options, verifies that they are consistent and 
+    """Parses the CLI options, verifies that they are consistent and
     reasonable, and acts on them if they are
 
     Parameters
     ----------
     opt : object
         Result of parsing the CLI with OptionParser, or any object with the
-        required attributes 
+        required attributes
     parser : object
         OptionParser instance.
     """
@@ -154,7 +162,7 @@ def verify_weave_options(opt, parser):
         except:
             logging.error("Unable to create weave cache %s", cache_dir)
             sys.exit(1)
-        
+
     if opt.clear_weave_cache_at_start:
         _clear_weave_cache()
         os.makedirs(cache_dir)

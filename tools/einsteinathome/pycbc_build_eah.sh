@@ -65,7 +65,7 @@ static="--disable-static"
 build_dlls=false
 rebase_dlls_before_pycbc=false
 build_lapack=true
-pyssl_from="tarball" # "pip-install"
+pyssl_from="pip-install" # "pip-install"
 numpy_from="pip-install" # "tarball"
 scipy_from="pip-install" # "git"
 scipy_version=0.19.0
@@ -89,6 +89,7 @@ use_pycbc_pyinstaller_hooks=true
 build_onefile_bundles=false
 run_analysis=true
 silent_build=false
+lal_pulsar="--enable-lalpulsar"
 
 if echo ".$WORKSPACE" | grep CYGWIN64_FRONTEND >/dev/null; then
     # hack to use the script as a frontend for a Cygwin build slave for a Jenkins job
@@ -119,6 +120,8 @@ elif test ".$1" = ".--force-debian4" ||
     link_gcc_version=4.8.5
     gcc_path="/usr/local/bin"
     build_ssl=true
+    pyssl_from="pip-install"
+    build_python=true
     pyinstaller_lsb="--no-lsb"
     $pyinstaller21_hacks || build_subprocess32=true
     build_onefile_bundles=true
@@ -148,13 +151,33 @@ elif grep -q "Scientific Linux CERN SLC release 6" /etc/redhat-release 2>/dev/nu
     build_lapack=false
     build_freetype=false
     build_zlib=false
+    lal_pulsar="--disable-lal-pulsar"
     build_wrapper=false
     build_fstab=false
     pyinstaller_lsb="--no-lsb"
     build_onefile_bundles=true
     appendix="_Linux64"
-elif grep -q "Ubuntu 12" /etc/issue 2>/dev/null; then
+elif grep -q "Ubuntu 12" /etc/issue 2>/dev/null ; then
     link_gcc_version=4.6
+    gcc_path="/usr/bin"
+    build_python=true
+    build_pcre=true
+    pyinstaller_lsb="--no-lsb"
+    build_onefile_bundles=false
+    appendix="_Linux64"
+    if test x$TRAVIS_OS_NAME = xlinux ; then
+        build_fftw=false
+        build_hdf5=false
+        build_ssl=false
+        build_lapack=false
+        build_gsl=false
+        build_freetype=false
+        build_zlib=false
+        build_wrapper=false
+        build_fstab=false
+    fi
+elif grep -q "Ubuntu 14" /etc/issue 2>/dev/null ; then
+    link_gcc_version=4.8
     gcc_path="/usr/bin"
     build_python=true
     build_pcre=true
@@ -302,6 +325,15 @@ wget_opts="-c --passive-ftp --no-check-certificate --tries=5 --timeout=30"
 export GIT_SSL_NO_VERIFY=true
 export PIP_TRUSTED_HOST="pypi.python.org github.com"
 
+function wwwget {
+  # use curl when available, else wget
+  if curl --version >/dev/null; then
+    curl -L "$@"
+  else
+    wget $wget_opts -O- "$@"
+  fi
+}
+
 # handle command-line arguments, possibly overriding above settings
 for i in $*; do
     case $i in
@@ -320,8 +352,8 @@ for i in $*; do
         --clean) rm -rf "$HOME/.cache" "$HOME/Library/Caches/pip" "$SOURCE/$BUILDDIRNAME-preinst.tgz" "$SOURCE/$BUILDDIRNAME-preinst-lalsuite.tgz" "$PYCBC";;
         --clean-lalsuite) rm -rf "$SOURCE/lalsuite" "$SOURCE/$BUILDDIRNAME-preinst-lalsuite.tgz";;
         --lalsuite-commit=*) lalsuite_branch="`echo $i|sed 's/^--lalsuite-commit=//'`";;
-        --blessed-lalsuite) lalsuite_branch=`wget $wget_opts -O- https://github.com/ligo-cbc/pycbc/releases/latest |
-            awk -F'>' '(p==0) && /This release has been tested against LALSuite with the hash:/ {p=1}; (p==1) && /<code>[0-9a-f]*$/{print $NF; p=2}'`;
+        --blessed-lalsuite) lalsuite_branch=$( wwwget https://github.com/ligo-cbc/pycbc/releases/latest |
+            awk -F'>' '(p==0) && /This release has been tested against LALSuite with the hash:/ {p=1}; (p==1) && /<code>[0-9a-f]*$/{print $NF; p=2}' );
             if ! echo "0$lalsuite_branch"|egrep '^[0-9a-f]*$' >/dev/null; then
                 echo "ERROR: blessed LALSuite version couldn't be determined" >&2
                 exit 1;
@@ -366,7 +398,9 @@ if [ ".$link_gcc_version" != "." ]; then
                 if test -x "${gcc_path}/$i-$link_gcc_version"; then
                     ln -s "${gcc_path}/$i-$link_gcc_version" $i
                 else
-                    echo ERROR; "${gcc_path}/$i-$link_gcc_version" not found
+                    echo ERROR: "${gcc_path}/$i-$link_gcc_version" not found
+                    ls -l ${gcc_path}/${i}-*
+                    exit 1
                 fi
         done
     )
@@ -446,11 +480,15 @@ else # if $BUILDDIRNAME-preinst.tgz
 
     # OpenSSL
     if $build_ssl; then
-    # p=openssl-1.0.2e # compile error on pyOpenSSL 0.13:
-    # pycbc/include/openssl/x509.h:751: note: previous declaration X509_REVOKED_ was here
-	p=openssl-1.0.1p
+        # use 1.0.1p for pyOpenSSL 0.13
+	if [ "$pyssl_from" = "tarball" ] ; then
+	    p=openssl-1.0.1p
+	else
+	    p=openssl-1.0.2l
+	fi
 	echo -e "\\n\\n>> [`date`] building $p" >&3
-	test -r $p.tar.gz || wget $wget_opts $aei/$p.tar.gz
+	test -r $p.tar.gz || wget $wget_opts $aei/$p.tar.gz ||
+	    wget $wget_opts https://www.openssl.org/source/$p.tar.gz
 	rm -rf $p
 	tar -xzvf $p.tar.gz  &&
 	cd $p &&
@@ -475,12 +513,17 @@ else # if $BUILDDIRNAME-preinst.tgz
 	make install
 	cd ..
 	$cleanup && rm -rf $p
+	hash -r
 	python -m ensurepip
+	hash -r
 	echo -e "\\n\\n>> [`date`] pip install --upgrade pip" >&3
 	pip install --upgrade pip
 	echo -e "\\n\\n>> [`date`] pip install virtualenv" >&3
 	pip install virtualenv
     fi
+
+    echo -e "\\n\\n>> [`date`] make sure dbhash and shelve exist" >&3
+    python -c "import dbhash, shelve"
 
     # set up virtual environment
     unset PYTHONPATH
@@ -491,11 +534,8 @@ else # if $BUILDDIRNAME-preinst.tgz
     export PYTHONPATH="$PREFIX/lib/python2.7/site-packages:$PYTHONPATH"
 
     # pyOpenSSL-0.13
-    if [ "$pyssl_from" = "pip-install" ] ; then
-	echo -e "\\n\\n>> [`date`] pip install pyOpenSSL==0.13" >&3
-	pip install pyOpenSSL==0.13
-    else
-	p=pyOpenSSL-0.13
+    if [ "$pyssl_from" = "tarball" ] ; then
+	p=pyOpenSSL-0.16
 	echo -e "\\n\\n>> [`date`] building $p" >&3
 	test -r $p.tar.gz || wget $wget_opts "$pypi/source/p/pyOpenSSL/$p.tar.gz"
 	rm -rf $p
@@ -507,6 +547,9 @@ else # if $BUILDDIRNAME-preinst.tgz
 	python setup.py install --prefix="$PREFIX"
 	cd ..
 	$cleanup && rm -rf $p
+    else
+	echo -e "\\n\\n>> [`date`] pip install pyOpenSSL" >&3
+	pip install pyOpenSSL
     fi
 
     # LAPACK & BLAS
@@ -546,9 +589,6 @@ else # if $BUILDDIRNAME-preinst.tgz
 
     echo -e "\\n\\n>> [`date`] pip install nose, Cython-0.23.2" >&3
     pip install nose Cython==0.23.2
-
-    echo -e "\\n\\n>> [`date`] make sure dbhash and shelve exist" >&3
-    python -c "import dbhash, shelve"
 
     # SCIPY
     if [ "$scipy_from" = "pip-install" ] ; then
@@ -723,7 +763,7 @@ Libs: -L${libdir} -lhdf5' |
         # LIBFRAME / FrameL
         p=libframe-8.30
         echo -e "\\n\\n>> [`date`] building $p" >&3
-        test -r $p.tar.gz || wget $wget_opts http://lappweb.in2p3.fr/virgo/FrameL/$p.tar.gz
+        test -r $p.tar.gz || wget $wget_opts http://software.ligo.org/lscsoft/source/$p.tar.gz
         rm -rf $p
         tar -xzf $p.tar.gz
         cd $p
@@ -806,7 +846,7 @@ else
     # LALSUITE
     if [ ".$no_lalsuite_update" != "." ]; then
         echo -e "\\n\\n>> [`date`] Not updating lalsuite" >&3
-	cd lalsuite
+        cd lalsuite
     elif test -d lalsuite/.git; then
         echo -e "\\n\\n>> [`date`] Updating lalsuite" >&3
         cd lalsuite
@@ -824,7 +864,7 @@ else
         fi
     else
         echo -e "\\n\\n>> [`date`] Cloning lalsuite" >&3
-        git clone git://versions.ligo.org/lalsuite.git
+        git clone https://git.ligo.org/lscsoft/lalsuite.git lalsuite
         cd lalsuite
         git remote add gitlab $gitlab/lalsuite.git
         if [ ".$lalsuite_branch" != "." ]; then
@@ -886,7 +926,7 @@ EOF
     cd lalsuite-build
     echo -e "\\n\\n>> [`date`] Configuring lalsuite" >&3
     ../lalsuite/configure CPPFLAGS="$lal_cppflags $CPPFLAGS" --disable-gcc-flags $shared $static --prefix="$PREFIX" --disable-silent-rules \
-        --disable-all-lal --enable-lalframe --enable-lalmetaio --enable-lalsimulation --enable-lalinspiral --enable-lalpulsar --enable-swig-python
+        --disable-all-lal --enable-lalframe --enable-lalmetaio --enable-lalsimulation --enable-lalinspiral ${lal_pulsar} --enable-swig-python
     if $build_dlls; then
 	echo '#include "/usr/include/stdlib.h"
 extern int setenv(const char *name, const char *value, int overwrite);
@@ -915,7 +955,7 @@ fi # if $BUILDDIRNAME-preinst.tgz
 
 # Pegasus
 if $build_pegasus ; then
-    v=4.7.4
+    v=4.8.1
     p=pegasus-python-source-$v
     echo -e "\\n\\n>> [`date`] building $p" >&3
     test -r $p.tar.gz ||
@@ -965,6 +1005,29 @@ if $silent_build ; then
     exec 2>&4
 fi
 
+# Temporary workaround until
+# https://git.ligo.org/lscsoft/glue/merge_requests/40
+# has been merged
+if $build_dlls; then
+    p=lscsoft-glue
+    echo -e "\\n\\n>> [`date`] building $p" >&3
+    if ! test -d $p/.git; then
+	git clone https://git.ligo.org/lscsoft/glue.git $p
+	( cd $p && git remote add bema https://git.ligo.org/bernd.machenschalk/glue.git )
+    fi
+    cd $p
+    git remote update
+    git remote prune bema
+    if git branch -r | fgrep bema/fix_eah_windows >/dev/null; then
+	git checkout fix_eah_windows || true
+    else
+	git checkout master || true
+    fi
+    git pull
+    python setup.py install --prefix="$PREFIX"
+    cd ..
+fi
+
 # PyCBC
 echo -e "\\n\\n>> [`date`] building pycbc"
 if $scratch_pycbc || ! test -d pycbc/.git ; then
@@ -1007,6 +1070,7 @@ fi
 echo -e "[`date`] install pkgconfig and six beforehand"
 pip install `grep -w ^pkgconfig requirements.txt||echo pkgconfig==1.1.0`
 pip install `grep -w ^six requirements.txt||echo 'six>=1.9.0'`
+pip install matplotlib
 if $pyinstaller21_hacks; then
     echo -e "[`date`] install matplotlib beforehand"
     pip install `grep ^matplotlib== requirements.txt||echo matplotlib==1.4.3`
@@ -1055,7 +1119,7 @@ mkdir -p "$ENVIRONMENT/dist"
 # if the build machine has dbhash & shelve, scipy weave will use bsddb
 # make sure these exist and get added to the bundle(s)
 python -c "import dbhash, shelve"
-hidden_imports="--hidden-import=dbhash --hidden-import=shelve"
+hidden_imports="--hidden-import=dbhash --hidden-import=shelve --hidden-import=six --hidden-import=cmath"
 
 # PyInstaller
 if echo "$pyinstaller_version" | egrep '^[0-9]\.[0-9][0-9]*$' > /dev/null; then
@@ -1173,11 +1237,19 @@ fi
 if $use_pycbc_pyinstaller_hooks; then
     export NOW_BUILDING=NULL
     export PYCBC_HOOKS_DIR="$hooks"
-    pyi-makespec $upx --additional-hooks-dir $hooks/hooks --runtime-hook $hooks/runtime-tkinter.py $hidden_imports --hidden-import=pkg_resources --onedir --name pycbc_inspiral$ext ./bin/pycbc_inspiral
+    pyi-makespec $upx \
+        --additional-hooks-dir $hooks/hooks \
+         --exclude-module astropy \
+        --add-data `python -c 'import astropy; print astropy.__path__[0],'`:astropy \
+        --runtime-hook $hooks/runtime-tkinter.py $hidden_imports \
+        --hidden-import=pkg_resources \
+        --onedir --name pycbc_inspiral$ext ./bin/pycbc_inspiral
 else
     # find hidden imports (pycbc CPU modules)
     hidden_imports=`find $PREFIX/lib/python2.7/site-packages/pycbc/ -name '*_cpu.py' | sed 's%.*/site-packages/%%;s%\.py$%%;s%/%.%g;s%^% --hidden-import=%' | tr -d '\012'`
-    pyi-makespec $upx $hidden_imports --hidden-import=scipy.linalg.cython_blas --hidden-import=scipy.linalg.cython_lapack --hidden-import=pkg_resources --onedir --name pycbc_inspiral$ext ./bin/pycbc_inspiral
+    pyi-makespec $upx $hidden_imports --hidden-import=scipy.linalg.cython_blas --hidden-import=scipy.linalg.cython_lapack --hidden-import=pkg_resources --onedir --name pycbc_inspiral$ext ./bin/pycbc_inspiral \
+            --exclude-module astropy \
+        --add-data `python -c 'import astropy; print astropy.__path__[0],'`:astropy
 fi
 # patch spec file to add "-v" to python interpreter options
 if $verbose_pyinstalled_python; then
@@ -1185,7 +1257,9 @@ if $verbose_pyinstalled_python; then
 exe = EXE(pyz, options,%' pycbc_inspiral$ext.spec
 fi
 echo -e "\\n\\n>> [`date`] running pyinstaller" >&3
-pyinstaller $upx pycbc_inspiral$ext.spec
+pyinstaller $upx pycbc_inspiral$ext.spec \
+        --exclude-module astropy \
+        --add-data `python -c 'import astropy; print astropy.__path__[0],'`:astropy
 
 test ".$ext" != "." &&
     mv dist/pycbc_inspiral$ext dist/pycbc_inspiral
@@ -1314,6 +1388,32 @@ if check_md5 "$p" "$md5"; then
     fi
 fi
 
+#87f7158d11b38487ee96049431785df3 HL-INJECTIONS.xml
+echo -e "\\n\\n>> [`date`] downloading injection file" >&3
+p="HL-INJECTIONS.xml"
+md5="87f7158d11b38487ee96049431785df3"
+if check_md5 "$p" "$md5"; then
+    rm -f "$p"
+    wget $wget_opts "$albert/$p"
+    if check_md5 "$p" "$md5"; then
+        echo "can't download $p - md5 mismatch"
+        exit 1
+    fi
+fi
+
+#89ec8c06076bdd46a3f66ecdc6bebf97  H1L1-SINGLE_TEMPLATE_BANK.xml
+echo -e "\\n\\n>> [`date`] downloading single template bank file" >&3
+p="H1L1-SINGLE_TEMPLATE_BANK.xml"
+md5="89ec8c06076bdd46a3f66ecdc6bebf97"
+if check_md5 "$p" "$md5"; then
+    rm -f "$p"
+    wget $wget_opts "$albert/$p"
+    if check_md5 "$p" "$md5"; then
+        echo "can't download $p - md5 mismatch"
+        exit 1
+    fi
+fi
+
 # Fetch any extra libraries specified on the command line
 if [ ! -z ${extra_libs} ] ; then
   echo -e "\\n\\n>> [`date`] installing extra libraries from ${extra_libs} to $PREFIX/lib" >&3
@@ -1327,7 +1427,7 @@ else
     export LAL_FRAME_LIBRARY=FrameL
 fi
 
-gw150914_bank=$p
+gw150914_bank="H1L1-SBANK_FOR_GW150914ER10.xml.gz"
 gw150914_approx='SPAtmplt:mtotal<4 SEOBNRv4_ROM:mtotal<20 SEOBNRv2_ROM_DoubleSpin:else'
 bank_array=( "$gw150914_bank" )
 approx_array=( "$gw150914_approx" )
@@ -1359,7 +1459,7 @@ for (( i=0; i<${n_runs}; i++ ))
 do
     rm -f H1-INSPIRAL-OUT.hdf
     echo "\
->> [`date`] pycbc_inspiral using
+>> [`date`] running pycbc_inspiral using
 >>   --bank-file ${bank_array[$i]}
 >>   --approximant ${approx_array[$i]}
 >>   ROM data from $lal_data_path"
@@ -1371,7 +1471,8 @@ do
       LEVEL2_CACHE_SIZE=8192 \
       WEAVE_FLAGS='-O3 -march=core2 -w' \
       FIXED_WEAVE_CACHE="$PWD/pycbc_inspiral"
-    args="--fixed-weave-cache ${processing_scheme} \
+    base_args="--fixed-weave-cache ${processing_scheme} \
+      --frame-files $frames \
       --sample-rate 2048 \
       --sgchisq-snr-threshold 6.0 \
       --sgchisq-locations mtotal>40:20-30,20-45,20-60,20-75,20-90,20-105,20-120 \
@@ -1402,10 +1503,10 @@ do
       --gps-start-time 1126259078 \
       --gps-end-time 1126259846 \
       --output H1-INSPIRAL-OUT.hdf \
-      --frame-files $frames \
-      --approximant ${approx_array[$i]} \
-      --bank-file ${bank_array[$i]} \
       --verbose"
+      args="${base_args} \
+      --approximant ${approx_array[$i]} \
+      --bank-file ${bank_array[$i]}"
     if $silent_build; then
         "$ENVIRONMENT/dist/pycbc_inspiral/pycbc_inspiral" $args 2>&1|
           awk '{if ((!/Filtering template|points above|power chisq|point chisq|Found chisq|generating SEOBNR|generating SPA/) || (/segment 1/ && NR % 50 == 0) || / 0: generating/ || / 1: generating/ ) print}'
@@ -1417,6 +1518,14 @@ done
 # test for GW150914
 echo -e "\\n\\n>> [`date`] test for GW150914"
 python $SOURCE/pycbc/tools/einsteinathome/check_GW150914_detection.py H1-INSPIRAL-OUT.hdf
+
+# run a set of injections to weave compile the injection code path
+echo -e "\\n\\n>> [`date`] running pycbc_inspiral with injections"
+args="${base_args} \
+  --approximant ${gw150914_approx} \
+  --bank-file H1L1-SINGLE_TEMPLATE_BANK.xml \
+  --injection-file HL-INJECTIONS.xml"
+"$ENVIRONMENT/dist/pycbc_inspiral/pycbc_inspiral" $args
 
 fi # if $run_analysis
 
@@ -1458,6 +1567,8 @@ if $build_onefile_bundles; then
     echo -e "\\n\\n>> [`date`] building pycbc_inspiral_osg pyinstaller onefile spec" >&3
     pyi-makespec \
         --additional-hooks-dir $hooks/hooks \
+        --exclude-module astropy \
+        --add-data `python -c 'import astropy; print astropy.__path__[0],'`:astropy \
         --runtime-hook $hooks/runtime-tkinter.py \
         --hidden-import=pkg_resources $hidden_imports \
         --onefile ./bin/pycbc_inspiral --name pycbc_inspiral_osg
@@ -1473,7 +1584,9 @@ if $build_onefile_bundles; then
         pycbc_inspiral_osg.spec1 > pycbc_inspiral_osg.spec
 
     echo -e ">> [`date`] running pyinstaller" >&3
-    pyinstaller pycbc_inspiral_osg.spec
+    pyinstaller pycbc_inspiral_osg.spec \
+                --exclude-module astropy \
+                --add-data `python -c 'import astropy; print astropy.__path__[0],'`:astropy
 
     if echo ".$pycbc_tag" | egrep '^\.v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$' >/dev/null; then
         mv dist/pycbc_inspiral_osg "dist/pycbc_inspiral_osg_$pycbc_tag"

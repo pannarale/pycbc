@@ -17,13 +17,9 @@ This modules provides classes for evaluating distributions with bounds.
 """
 
 import warnings
-try:
-    from ConfigParser import Error
-except ImportError:
-    from configparser import Error
-from pycbc.distributions import boundaries
-
-VARARGS_DELIM = '+'
+from six.moves.configparser import Error
+from pycbc import boundaries
+from pycbc import VARARGS_DELIM
 
 #
 #   Distributions for priors
@@ -165,7 +161,7 @@ def bounded_from_config(cls, cp, section, variable_args,
         ['btype-min-{}'.format(arg) for arg in variable_args] + \
         ['btype-max-{}'.format(arg) for arg in variable_args] + \
         ['cyclic-{}'.format(arg) for arg in variable_args] + \
-        additional_opts.keys()
+        list(additional_opts.keys())
 
     # get a dict with bounds as value
     dist_args = {}
@@ -233,7 +229,7 @@ class BoundedDist(object):
                               "reflected boundaries. Reflected boundaries "
                               "can cause issues when used in an MCMC.")
         self._bounds = params
-        self._params = sorted(params.keys())
+        self._params = sorted(list(params.keys()))
 
     @property
     def params(self):

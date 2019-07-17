@@ -19,7 +19,7 @@
 import os.path, types
 import codecs
 
-from ConfigParser import ConfigParser
+from six.moves.configparser import ConfigParser
 from jinja2 import Environment, FileSystemLoader
 from xml.sax.saxutils import unescape
 
@@ -70,9 +70,9 @@ def get_embedded_config(filename):
         cp = pycbc.results.load_metadata_from_file(filename)
     except TypeError:
         cp = ConfigParser()
-        
+
     cp.check_option = types.MethodType(check_option, cp)
- 
+
     return cp
 
 def setup_template_render(path, config_path):
@@ -220,7 +220,7 @@ def render_tmplt(path, cp):
     content = None
 
     # read file as a string
-    with open(path, 'rb') as fp:
+    with open(path, 'r') as fp:
         content = fp.read()
 
     # replace all the escaped characters

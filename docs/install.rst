@@ -4,6 +4,32 @@
 Installing PyCBC
 ################
 
+%%%%%%%%%%%%%%%%%%%%%%%%
+Simple Installation
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+PyCBC is available through the PyPI. For straightforward use of the PyCBC library
+and executables, we recommend installing with the following command. If you 
+are not running in a specialized computing environment, this is probably the
+appropriate thing to do. Note, that at this time, PyCBC supports Python2. Python3
+support is under development.
+
+.. code-block:: bash
+    
+    pip install lalsuite pycbc
+    
+PyCBC depends on `lalsuite` for a lot of functionality, however, if you are
+getting lalsuite through another means, you may ommit this part of the command.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Full Virtualenv for Development and Production
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+The following instructions are appropriate for development use on LDG clusters, 
+and goes through some special case scenarios appropriate for these environments
+as they generally contain older reference operating systems. Other users may find
+useful tips here, but in most cases, we suggest using the simpler instructions.
+
 This document explains how to set up a virtual environment to install PyCBC
 either for development or use in a production analysis with a release. The
 code build will be a standard Python install which requires that the
@@ -31,7 +57,6 @@ These instructions walk you through the process of
         * `Installing source from GitHub for development`_.
     * Optional additional installation steps
         * `Building and Installing Documentation`_.
-        * `Modifying pycbc-glue`_.
         * `Use of Intel MKL Optimized FFT libraries`_.
         * `Graphics Processing Unit support with CUDA`_
 
@@ -156,19 +181,7 @@ Install unittest2, python-cjson, and numpy with the command:
 
 .. code-block:: bash
 
-    pip install "numpy>=1.6.4" unittest2 python-cjson Cython decorator
-
-To authenticate with LIGO Data Grid services, you need M2Crypto which you should install with 
-
-.. code-block:: bash
-
-    SWIG_FEATURES="-cpperraswarn -includeall -I/usr/include/openssl" pip install M2Crypto
-
-On MacOS using homebrew to install openssl you may need to set the following extra environment variables to install M2Crypto:
-
-.. code-block:: bash
-
-   CFLAGS="-I/usr/local/opt/openssl/include -L/usr/local/opt/openssl/lib" SWIG_FEATURES="-cpperraswarn -includeall -I/usr/local/opt/openssl/include/" pip install M2Crypto
+    pip install "numpy>=1.13.0" python-cjson Cython decorator
 
 Once you have these packages installed, you can now install lalsuite following the instructions at:
 
@@ -191,8 +204,8 @@ Next install the Pegasus WMS python libraries needed to build the workflows with
 
 .. code-block:: bash
 
-    pip install http://download.pegasus.isi.edu/pegasus/4.7.3/pegasus-python-source-4.7.3.tar.gz
-
+    pip install http://download.pegasus.isi.edu/pegasus/4.8.1/pegasus-python-source-4.8.1.tar.gz
+    
 To query the new Advanced LIGO and Advanced Virgo Segment Database, you will need to install the ``dqsegdb`` tools. Install the 1.4.1 pre-release of these tools, run the command:
 
 .. code-block:: bash
@@ -293,7 +306,7 @@ To build the documentation from your virtual environment, first make sure that y
 
     pip install "Sphinx>=1.5.0"
     pip install sphinx-rtd-theme
-    pip install git+https://github.com/ligo-cbc/sphinxcontrib-programoutput.git#egg=sphinxcontrib-programoutput
+    pip install sphinxcontrib-programoutput
     
 To generate the documentation and push it to your personal GitHub pages, first create a branch names ``gh-pages``, if you do not already have one. Follow the `GitHub branch <https://help.github.com/articles/creating-and-deleting-branches-within-your-repository/>`_ instructions to do this.
 
@@ -329,32 +342,6 @@ For more details on building and maintaining the documentation under GitHub proj
     :maxdepth: 1
 
     build_gh_pages
-
-
-====================
-Modifying pycbc-glue
-====================
-
-PyCBC depends on the package pycbc-glue which is a fork of the lalsuite packages. The correct version is automatically installed by pip as part of the main PyCBC install. If you are developing code in pycbc-glue, then you can clone them from GitHib into your virtual environment's source directory and build and install them from there.
-
-.. note::
-
-    If you want to develop pycbc-glue, you should follow the instructions to `fork a repository <https://help.github.com/articles/fork-a-repo/>`_ to fork the `ligo-cbc/pycbc-glue <https://github.com/ligo-cbc/pycbc-glue>`_ repository into your own account.
-
-You can obtain these repositories in the standard way using git, replacing ``ligo-cbc`` with your GitHub user account name
-
-.. code-block:: bash
-
-    cd ${VIRTUAL_ENV}/src
-    git clone git@github.com:ligo-cbc/pycbc-glue.git
-
-Once you have the source code cloned, you can run 
-
-.. code-block:: bash
-
-    python setup.py install
-
-to install pycbc-glue into your virtual environment.
 
 ========================================
 Use of Intel MKL Optimized FFT libraries

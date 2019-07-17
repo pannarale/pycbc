@@ -31,7 +31,7 @@ import os.path
 import h5py
 from copy import copy
 import numpy as np
-from pycbc_glue.ligolw import ligolw, table, lsctables, utils as ligolw_utils
+from glue.ligolw import ligolw, table, lsctables, utils as ligolw_utils
 import pycbc.waveform
 import pycbc.pnutils
 import pycbc.waveform.compress
@@ -42,6 +42,10 @@ import pycbc.io
 def sigma_cached(self, psd):
     """ Cache sigma calculate for use in tandem with the FilterBank class
     """
+    if not hasattr(self, '_sigmasq'):
+        from pycbc.opt import LimitedSizeDict
+        self._sigmasq = LimitedSizeDict(size_limit=2**5)
+
     key = id(psd)
     if not hasattr(psd, '_sigma_cached_key'):
         psd._sigma_cached_key = {}
@@ -258,13 +262,23 @@ class TemplateBank(object):
             f = h5py.File(filename, 'r')
             self.filehandler = f
             try:
-                fileparams = map(str, f.attrs['parameters'])
+                fileparams = list(f.attrs['parameters'])
             except KeyError:
                 # just assume all of the top-level groups are the parameters
-                fileparams = map(str, f.keys())
+                fileparams = list(f.keys())
                 logging.info("WARNING: no parameters attribute found. "
                     "Assuming that %s " %(', '.join(fileparams)) +
                     "are the parameters.")
+            tmp_params = []
+            # At this point fileparams might be bytes. Fix if it is
+            for param in fileparams:
+                try:
+                    param = param.decode()
+                    tmp_params.append(param)
+                except AttributeError:
+                    tmp_params.append(param)
+            fileparams = tmp_params
+
             # use WaveformArray's syntax parser to figure out what fields
             # need to be loaded
             if parameters is None:
@@ -277,14 +291,14 @@ class TemplateBank(object):
             dtype = []
             data = {}
             for key in common_fields+add_fields:
-                data[str(key)] = f[key][:]
-                dtype.append((str(key), data[key].dtype))
+                data[key] = f[key][:]
+                dtype.append((key, data[key].dtype))
             num = f[fileparams[0]].size
             self.table = pycbc.io.WaveformArray(num, dtype=dtype)
             for key in data:
                 self.table[key] = data[key]
             # add the compressed waveforms, if they exist
-            self.has_compressed_waveforms = 'compressed_waveforms' in f 
+            self.has_compressed_waveforms = 'compressed_waveforms' in f
         else:
             raise ValueError("Unsupported template bank file extension %s" %(
                 ext))
@@ -313,7 +327,7 @@ class TemplateBank(object):
         """
         fields = self.table.fieldnames
         if 'template_hash' in fields:
-             return
+            return
 
         # The fields to use in making a template hash
         hash_fields = ['mass1', 'mass2', 'inclination',
@@ -524,13 +538,19 @@ class LiveFilterBank(TemplateBank):
         if isinstance(index, slice):
             return self.getslice(index)
 
+        return self.get_template(index)
+
+    def get_template(self, index, min_buffer=None):
+
         approximant = self.approximant(index)
         f_end = self.end_frequency(index)
         flow = self.table[index].f_lower
 
         # Determine the length of time of the filter, rounded up to
         # nearest power of two
-        min_buffer = .5 + self.minimum_buffer
+        if min_buffer is None:
+            min_buffer =  self.minimum_buffer
+        min_buffer += 0.5
 
         from pycbc.waveform.waveform import props
         p = props(self.table[index])
@@ -561,9 +581,9 @@ class LiveFilterBank(TemplateBank):
         # erased by the type conversion below.
         ttotal = template_duration = -1
         if hasattr(htilde, 'length_in_time'):
-                ttotal = htilde.length_in_time
+            ttotal = htilde.length_in_time
         if hasattr(htilde, 'chirp_length'):
-                template_duration = htilde.chirp_length
+            template_duration = htilde.chirp_length
 
         self.table[index].template_duration = template_duration
 
@@ -579,13 +599,13 @@ class LiveFilterBank(TemplateBank):
 
         # Add sigmasq as a method of this instance
         htilde.sigmasq = types.MethodType(sigma_cached, htilde)
-        htilde._sigmasq = {}
 
         htilde.id = self.id_from_hash(hash((htilde.params.mass1,
                                       htilde.params.mass2,
                                       htilde.params.spin1z,
                                       htilde.params.spin2z)))
         return htilde
+
 
 class FilterBank(TemplateBank):
     def __init__(self, filename, filter_length, delta_f, dtype,
@@ -732,9 +752,9 @@ class FilterBank(TemplateBank):
         # erased by the type conversion below.
         ttotal = template_duration = None
         if hasattr(htilde, 'length_in_time'):
-                ttotal = htilde.length_in_time
+            ttotal = htilde.length_in_time
         if hasattr(htilde, 'chirp_length'):
-                template_duration = htilde.chirp_length
+            template_duration = htilde.chirp_length
 
         self.table[index].template_duration = template_duration
 
