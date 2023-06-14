@@ -122,7 +122,7 @@ def load_mass_data(input_file_handle, key, tag):
 #    return data
 
 
-def load_sky_error_data(input_file_handle, key, tag, trig_data):
+def load_sky_error_data(input_file_handle, key, tag):
     """Extract data related to sky_error from raw injection and trigger data"""
     if tag == 'missed':
         # Missed injections are assigned null values
@@ -132,8 +132,8 @@ def load_sky_error_data(input_file_handle, key, tag, trig_data):
         inj['ra'] = input_file_handle[tag+'/ra'][:]
         inj['dec'] = input_file_handle[tag+'/dec'][:]
         trig = {}
-        trig['ra'] = np.rad2deg(trig_data['network/longitude'][:])
-        trig['dec'] = np.rad2deg(trig_data['network/latitude'][:])
+        trig['ra'] = np.rad2deg(input_file_handle['network/longitude'][:])
+        trig['dec'] = np.rad2deg(input_file_handle['network/latitude'][:])
         data = np.arccos(np.cos(inj['dec'] - trig['dec']) -
                          np.cos(inj['dec']) * np.cos(trig['dec']) *
                          (1 - np.cos(inj['ra'] - trig['ra'])))
@@ -150,7 +150,7 @@ easy_keys = ['distance', 'mass1', 'mass2', 'polarization',
              'spin2_azimuthal', 'spin2_polar',
              'dec', 'ra', 'phi_ref']
 # Function to extract desired data from an injection file
-def load_data(input_file_handle, keys, tag, trig_data):
+def load_data(input_file_handle, keys, tag):
     """Create a dictionary containing the data specified by the
     list of keys extracted from an injection file"""
 
@@ -170,7 +170,7 @@ def load_data(input_file_handle, keys, tag, trig_data):
                 data_dict[key] = load_incl_data(input_file_handle, key, tag)
             elif key == 'sky_error':
                 data_dict[key] = load_sky_error_data(input_file_handle, key,
-                                                 tag, trig_data)
+                                                 tag)
         except KeyError:
             #raise NotImplemented(key+' not allowed: returning empty entry')
             logging.info(key+' not allowed yet')
@@ -284,10 +284,10 @@ max_reweighted_snr = max(trig_data['network/reweighted_snr'][:])*0.2 # FIXME: Lo
 # Post-process injections
 # =======================
 # Extract the necessary data from the missed injections for the plot
-missed_inj = load_data(f, [x_qty, y_qty], 'missed', trig_data)
+missed_inj = load_data(f, [x_qty, y_qty], 'missed')
 
 # Extract the necessary data from the found injections for the plot
-found_inj = load_data(f, [x_qty, y_qty], 'found', trig_data)
+found_inj = load_data(f, [x_qty, y_qty], 'found')
 
 # Injections found surviving vetoes
 found_after_vetoes = found_inj if 'found_after_vetoes' not in f.keys() else f['found_after_vetoes']
