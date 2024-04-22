@@ -68,25 +68,28 @@ parser.add_argument(
 )
 parser.add_argument("--bank-file", type=str)
 parser.add_argument(
-    "--snr-threshold", type=float, help="SNR threshold for trigger generation"
-)
-parser.add_argument(
-    "--newsnr-threshold",
+    "--snr-threshold",
     type=float,
-    metavar='THRESHOLD',
-    help="Cut triggers with NewSNR less than THRESHOLD",
+    help="Single IFO SNR threshold for trigger generation."
 )
+# Commenting out unused options: remove if they remain unused
+#parser.add_argument(
+#    "--newsnr-threshold",
+#    type=float,
+#    metavar='THRESHOLD',
+#    help="Cut triggers with NewSNR less than THRESHOLD",
+#)
 parser.add_argument(
     "--low-frequency-cutoff",
     type=float,
-    help="The low frequency cutoff to use for filtering " "(Hz)",
+    help="The low frequency cutoff to use for filtering (Hz).",
 )
-# add approximant arg
+# Add approximant arg
 waveform.bank.add_approximant_arg(parser)
 parser.add_argument(
     "--order",
     type=str,
-    help="The integer half-PN order at which to generate the " "approximant.",
+    help="The integer half-PN order at which to generate the approximant.",
 )
 parser.add_argument(
     "--taper-template",
@@ -117,7 +120,7 @@ parser.add_argument(
     "bank file used to compute the the bank chi-square veto.",
 )
 parser.add_argument("--chisq-bins", default=0)
-# Commenting out options which are not yet implemented
+# Commenting out unused options: remove if they remain unused
 # parser.add_argument("--chisq-threshold", type=float, default=0)
 # parser.add_argument("--chisq-delta", type=float, default=0)
 parser.add_argument("--autochi-number-points", type=int, default=0)
@@ -139,10 +142,9 @@ parser.add_argument(
     "sparse SNR sample.",
 )
 parser.add_argument(
-    "--upsample-method",
     choices=["pruned_fft"],
     default='pruned_fft',
-    help="The method to find the SNR points between the " "sparse SNR sample.",
+    help="The method to find the SNR points between the sparse SNR sample.",
 )
 parser.add_argument(
     "--user-tag",
@@ -152,20 +154,27 @@ parser.add_argument(
     "compatibility with pipedown post-processing. Option "
     "will be removed when no longer needed.",
 )
-# Arguments added for the coherent stuff
-parser.add_argument("--ra", type=float, help="Right ascension, in radians")
-parser.add_argument("--dec", type=float, help="Declination, in radians")
+parser.add_argument(
+    "--ra",
+    type=float,
+    help="Right ascension of sky point to search (radians),"
+)
+parser.add_argument(
+    "--dec",
+    type=float,
+    help="Declination of sky point to search (radians),"
+)
 parser.add_argument(
     "--sky-grid",
     type=str,
-    help="Sky-grid (hdf file) containing two datasets : "
+    help="Sky-grid to search, and hdf file containing two datasets: "
     "ra and dec, both in radians",
 )
 parser.add_argument(
     "--coinc-threshold",
     type=float,
     default=0.0,
-    help="Triggers with coincident/coherent snr below this "
+    help="Triggers with coincident/coherent SNR below this "
     "value will be discarded.",
 )
 parser.add_argument(
@@ -175,7 +184,7 @@ parser.add_argument(
     "--null-min",
     type=float,
     default=5.25,
-    help="Triggers with null_snr above this value will be" " discarded.",
+    help="Triggers with null_snr above this value will be discarded.",
 )
 parser.add_argument(
     "--null-grad",
@@ -201,7 +210,7 @@ parser.add_argument(
     default="standard",
     choices=["standard", "left", "right", "left+right"],
     help="Choice of projection matrix. 'left' and 'right' "
-    "correspond to face-away and face-on",
+    "correspond to face-away and face-on.",
 )
 parser.add_argument(
     "--num-slides",
@@ -226,63 +235,69 @@ inject.insert_injfilterrejector_option_group_multi_ifo(parser)
 sgchisq.SingleDetSGChisq.insert_option_group(parser)
 args = parser.parse_args()
 init_logging(args.verbose)
-# Set GRB time variable for convenience
-t_gps = args.trigger_time
-# The following line aranges the ifos in alphabetical order so they are
-# always called in the same order.
+# Arange IFOs alphabetically so they are always called in the same order
 args.instruments.sort()
-nifo = len(args.instruments[:])
-# The following class verification methods are used to check whether input CLI
-# options provided by parser to pycbc.strain, pycbc.strain.StrainSegments,
-# pycbc.psd, pycbc.scheme & pycbc.fft modules are sane.
-# pycbc.strain CLI verifier:
+# Use class verification methods to check whether input CLI options provided
+# by parser to pycbc.strain, pycbc.strain.StrainSegments, pycbc.psd,
+# pycbc.scheme, and pycbc.fft modules are sane.
 strain.verify_strain_options_multi_ifo(args, parser, args.instruments)
 strain.StrainSegments.verify_segment_options_multi_ifo(
     args, parser, args.instruments
 )
-# The pycbc.psd CLI verifier:
 psd.verify_psd_options_multi_ifo(args, parser, args.instruments)
-# The pycbc.scheme CLI verifier:
 scheme.verify_processing_options(args, parser)
-# The pycbc.fft CLI verifier:
 fft.verify_fft_options(args, parser)
-# The following stores a Dictionary of "InjFilterRejector" objects
-# which is used to avoid using computing power on injections corresponding
-# to templates with significantly different chirp mass.
+# Verify sky grid/point options
+if args.sky_grid is not None:
+    if args.ra is not None or args.dec is not None:
+        parser.error('Provide either a sky grid or a sky position, not both.')
+elif args.ra is None or args.dec is None:
+    parser.error('To specify a single sky position, provide both ra and dec.')
+
+# InjFilterRejector instance: avoids investing computing power on processing
+# injections with templates that differ significantly in chirp mass
 inj_filter_rejector = inject.InjFilterRejector.from_cli_multi_ifos(
     args, args.instruments
 )
-# The following stores a dictionary of "timeseries" objects. Each of them
-# corresponds to the strain each detectors.
+# Create a dictionary to store timeseries objects corresponding to the
+# individual detector strains.
 # strain data is taken from args.gps_start_time to args.gps_end_time
-# using the sampling rate args.sample_rate
+# with the sampling rate args.sample_rate
 strain_dict = strain.from_cli_multi_ifos(
     args, args.instruments, inj_filter_rejector, dyn_range_fac=DYN_RANGE_FAC
 )
-# The following stores a dictionary of python slice objects, that indicate
-# where the segments begin and end,for each detector's timeseries.
+# Create a dictionary of Python slice objects that indicate where the segments
+# start and end for each detector timeseries.
 strain_segments_dict = strain.StrainSegments.from_cli_multi_ifos(
     args, strain_dict, args.instruments
 )
+# Python context
 ctx = scheme.from_cli(args)
 with ctx:
     fft.from_cli(args)
-    # Set some often used variables for easy access
+    # Set some convenience variables: number of IFOs, lower frequency,
+    # GRB time, sky positions to search (either a grid or single sky point)
+    nifo = len(args.instruments[:])
     flow = args.low_frequency_cutoff
-    flow_dict = defaultdict(lambda: flow)
-    # The following for loop is used to check whether
-    # the sampling rate, flen and tlen agree for all detectors
-    # taking the zeroth detector in the list as a reference.
+    t_gps = args.trigger_time
+    if args.sky_grid is not None:
+        sky_grid = h5py.File(args.sky_grid, 'r')
+        ra = np.array(sky_grid['ra'])
+        dec = np.array(sky_grid['dec'])
+    else:
+        ra = np.array([args.ra])
+        dec = np.array([args.dec])
+    sky_positions = np.array([ra, dec])
+    num_sky_positions = sky_positions.shape[1]
+    positions_array = np.arange(num_sky_positions)
+    # Check whether the sampling rate, flen, tlen, and delta_f agree for all
+    # detectors taking the 0-th detector in the list as a reference.
     for count, ifo in enumerate(args.instruments):
         if count == 0:
             sample_rate = strain_dict[ifo].sample_rate
-            sample_rate_dict = defaultdict(lambda: sample_rate)
             flen = strain_segments_dict[ifo].freq_len
-            flen_dict = defaultdict(lambda: flen)
             tlen = strain_segments_dict[ifo].time_len
-            tlen_dict = defaultdict(lambda: tlen)
             delta_f = strain_segments_dict[ifo].delta_f
-            delta_f_dict = defaultdict(lambda: delta_f)
         else:
             try:
                 assert sample_rate == strain_dict[ifo].sample_rate
@@ -293,17 +308,16 @@ with ctx:
                 err_msg = "Sample rate, frequency length and time length "
                 err_msg += "must all be consistent across ifos."
                 raise ValueError(err_msg)
-    # segments is a dictionary of "frequency domain" objects, each
-    # of which is the Fourier transform of the segments in strain_segments_dict
+    # segments is a dictionary of frequency domain objects, each of which
+    # is the Fourier transform of the segments in strain_segments_dict
     logging.info("Making frequency-domain data segments")
     segments = {
         ifo: strain_segments_dict[ifo].fourier_segments()
         for ifo in args.instruments
     }
-    # The timedomain segments dictionary is deleted to save memory.
+    # Memory cleaning
     del strain_segments_dict
-    # The follwowing pycbc.psd method
-    # associates PSDs to segments for all ifos when using the multi-detector CLI
+    # Associate PSDs to segments for all IFOs when using the multi-detector CLI
     psd.associate_psds_to_multi_ifo_segments(
         args,
         segments,
@@ -315,42 +329,16 @@ with ctx:
         dyn_range_factor=DYN_RANGE_FAC,
         precision='single',
     )
-    # Currently we are using the same matched-filter parameters for all
-    # ifos. Therefore only one MatchedFilterControl needed. Maybe this can
-    # change if needed. Segments is only used to get tlen etc. which is
-    # same for all ifos, so just send the first ifo
-    template_mem = zeros(tlen, dtype=complex64)
 
-    # Read the sky grid or the single sky position
-    if (
-        args.sky_grid is not None
-        and args.ra is not None
-        and args.dec is not None
-    ):
-        parser.error('Give either a sky grid or a sky position, not both')
-
-    if args.sky_grid is not None:
-        sky_grid = h5py.File(args.sky_grid, 'r')
-        ra = np.array(sky_grid['ra'])
-        dec = np.array(sky_grid['dec'])
-    if args.ra is not None and args.dec is not None:
-        ra = np.array([args.ra])
-        dec = np.array([args.dec])
-
-    sky_positions = np.array([ra, dec])
-    num_sky_positions = sky_positions.shape[1]
-    positions_array = np.arange(num_sky_positions)
-
-    # Calculate time delays to each detector and store time slide shifts
-    # in a dedicated dictionary
+    # Create a dictionary of time slide shifts; IFO 0 is unshifted
     slide_ids = np.arange(1 + args.num_slides)
     time_slides = {
-        ifo: args.slide_shift * slide_ids * n_ifo
-        for n_ifo, ifo in enumerate(args.instruments)
+        ifo: args.slide_shift * slide_ids * ifo_idx
+        for ifo_idx, ifo in enumerate(args.instruments)
     }
-    # Given the time delays in time_slides, the following dictionary keeps the
-    # time delay indices evaluated wrt the geocenter, in units of samples, i.e.
-    # (time delay from geocenter + timeslide)*sampling_rate
+    # Given the time delays wrt to IFO 0 in time_slides, create a dictionary
+    # for time delay indices evaluated wrt the geocenter, in units of samples,
+    # i.e. (time delay from geocenter + time slide)*sampling_rate
     time_delay_idx_zerolag = {
         position_index: {
             ifo: detector.Detector(ifo).time_delay_from_earth_center(
@@ -382,11 +370,20 @@ with ctx:
     }
     del time_delay_idx_zerolag
 
-    # Matched filter each ifo. Do not cluster here for a coherent search.
-    # Clustering happens at the end of the template loop.
+    # Prototype container for the output of MatchedFilterControl and
+    # waveform.FilterBank (see below).
+    # Use tlen of the first IFO as it is the same across IFOs.
+    template_mem = zeros(tlen, dtype=complex64)
+
+    # We are currently using the same matched-filter parameters for all
+    # IFOs. Therefore only one MatchedFilterControl setup is needed.
+    # This can be change if needed.
     # NOTE: Historically, the single detector SNR threshold was applied
-    #       to the 2 most sensitive in the network, while here it appplies
+    #       to the 2 most sensitive in the network, while this way it applies
     #       to all IFOs.
+    # NOTE: Do not cluster here for a coherent search (use_cluster=False).
+    #       Clustering happens at the end of the template loop.
+    # NOTE: This will apply the SNR cut to single IFO SNR.
     matched_filter = {
         ifo: MatchedFilterControl(
             args.low_frequency_cutoff,
@@ -405,6 +402,7 @@ with ctx:
         )
         for ifo in args.instruments
     }
+
     # Vetoes
     # The existing SingleDetPowerChisq can calculate the single detector
     # chisq for multiple ifos, so just use that directly.
@@ -804,7 +802,7 @@ with ctx:
                             logging.info(
                                 "Max coherent SNR = %.2f", max(rho_coh)
                             )
-                            # Find the null snr
+                            # Find the null SNR and possibly apply null SNR cut
                             (
                                 null,
                                 rho_coh,
