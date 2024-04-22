@@ -557,7 +557,6 @@ with ctx:
             sigma = {ifo: np.sqrt(sigmasq[ifo]) for ifo in args.instruments}
             # Every time s_num is zero , run new_template to increment the 
             # template index
- # HERE
             if s_num == 0:
                 event_mgr.new_template(tmplt=template.params, sigmasq=sigmasq)
             if not analyse_segment:
@@ -565,49 +564,54 @@ with ctx:
             logging.info(
                 "Analyzing segment %d/%d", s_num + 1, len(segments[ifo])
             )
-            # The following dicts are created to store copies of the
-            # matched filtering results computed below
+            # The following dicts with IFOs as keys are created to store
+            # copies of the matched filtering results computed below.
+            # - Complex SNR time series
             snr_dict = dict.fromkeys(args.instruments)
+            # - Its normalization
             norm_dict = dict.fromkeys(args.instruments)
+            # - The correlation vector frequency series
+            #   It is the FFT of the SNR (so inverse FFT it to get the SNR)
             corr_dict = dict.fromkeys(args.instruments)
+            # - The trigger indices list (idx_dict will be created out of this)
             idx = dict.fromkeys(args.instruments)
+            # - The list of SNR values at the trigger locations
             snrv_dict = dict.fromkeys(args.instruments)
+            # - Normalized version of snrv_dict
             snr = dict.fromkeys(args.instruments)
             for ifo in args.instruments:
                 logging.info(
                     "Filtering template %d/%d, ifo %s", t_num + 1, n_bank, ifo
                 )
-                # No clustering in the coherent search until the end.
-                # The correlation vector is the FFT of the snr (so inverse
-                # FFT it to get the snr).
-                # The following lines Unpack & store copies of the matched
-                # filtering results for the current segment and template.
+                # The following lines unpack and store copies of the matched
+                # filtering results for the current template, segment, and IFO.
+                # No clustering happens in the coherent search until the end.
                 snr_ts, norm, corr, ind, snrv = matched_filter[
                     ifo
                 ].matched_filter_and_cluster(
                     s_num, template.sigmasq(stilde[ifo].psd), window=0
                 )
-                # snr time series for each ifo
                 snr_dict[ifo] = (
                     snr_ts[matched_filter[ifo].segments[s_num].analyze] * norm
                 )
+                # Raise error if this segment has no data
+                if len(snr_dict[ifo]) == 0:
+                    raise RuntimeError(
+                        'The SNR triggers dictionary is empty. This '
+                        'should not be possible.'
+                    )
                 norm_dict[ifo] = norm
-                # The correlation vector for each IFO.
-                # It is the FFT of the SNR (so inverse FFT it to get the SNR).
                 corr_dict[ifo] = corr.copy()
-                # Trigger indices list for each ifo
                 idx[ifo] = ind.copy()
-                # Trigger snr list for each ifo
                 snrv_dict[ifo] = snrv.copy()
-                # Normalized trigger snr list for each ifo
                 snr[ifo] = snrv * norm
 
             # Move onto next segment if there are no triggers.
             n_trigs = [len(snrv_dict[ifo]) for ifo in args.instruments]
             if not any(n_trigs):
                 continue
-            # Short timeslides start here !
-            # Loop through slides, staring with the zero-lag
+
+            # Loop over time-slides, staring with the zero-lag
             for slide in range(args.num_slides + 1):
                 logging.info("Analyzing slide %d/%d", slide, args.num_slides)
                 for position_index in positions_array:
@@ -616,12 +620,13 @@ with ctx:
                         position_index + 1,
                         len(positions_array),
                     )
-                    # Save the indexes of triggers (if we have any)
-                    # Even if we have none, need to keep an empty dictionary.
-                    # Only do this if idx doesn't get time shifted out of the
-                    # time we are looking at, i.e., require
+                    # Adjust the indices of triggers (if there are any)
+                    # and store trigger indices list in a dictionary;
+                    # when there are no triggers, the dictionary is empty.
+                    # Indices are kept only if they do not get time shifted
+                    # out of the time we are looking at, i.e., require
                     # idx[ifo] - time_delay_idx[slide][position_index][ifo]
-                    # to be in  (0, len(snr_dict[ifo]))
+                    # to be in (0, len(snr_dict[ifo]))
                     idx_dict = {
                         ifo: idx[ifo][
                             np.logical_and(
@@ -634,10 +639,9 @@ with ctx:
                         ]
                         for ifo in args.instruments
                     }
-
                     # Find triggers that are coincident (in geocent time) in
-                    # multiple ifos. If a single ifo analysis then just use the
-                    # indexes from that ifo.
+                    # multiple IFOs. If a single IFO analysis then just use the
+                    # indices from that IFO, i.e., IFO 0.
                     if nifo > 1:
                         coinc_idx = coh.get_coinc_indexes(
                             idx_dict, time_delay_idx[slide][position_index]
@@ -652,14 +656,7 @@ with ctx:
                     logging.info(
                         "Found %d coincident triggers", len(coinc_idx)
                     )
-                    for ifo in args.instruments:
-                        # Raise errror if this segment has no data
-                        # FIXME: raise this sooner?
-                        if len(snr_dict[ifo]) == 0:
-                            raise RuntimeError(
-                                'The SNR triggers dictionary is empty. This '
-                                'should not be possible.'
-                            )
+# HERE
                     # Time delay is applied to indices
                     coinc_idx_det_frame = {
                         ifo: (
@@ -958,6 +955,7 @@ with ctx:
                     'time_index', 'reweighted_snr', cluster_window, slide=slide
                 )
         event_mgr.finalize_template_events()
+    logging.info("Filtering completed")
 
 logging.info('Writing output')
 event_mgr.write_events(args.output)
