@@ -318,6 +318,7 @@ with ctx:
     # Memory cleaning
     del strain_segments_dict
     # Associate PSDs to segments for all IFOs when using the multi-detector CLI
+    logging.info("Associating PSDs to them")
     psd.associate_psds_to_multi_ifo_segments(
         args,
         segments,
@@ -330,6 +331,7 @@ with ctx:
         precision='single',
     )
 
+    logging.info("Determining time slide shifts and time delays")
     # Create a dictionary of time slide shifts; IFO 0 is unshifted
     slide_ids = np.arange(1 + args.num_slides)
     time_slides = {
@@ -370,6 +372,7 @@ with ctx:
     }
     del time_delay_idx_zerolag
 
+    logging.info("Setting up MatchedFilterControl at each IFO")
     # Prototype container for the output of MatchedFilterControl and
     # waveform.FilterBank (see below).
     # Use tlen of the first IFO as it is the same across IFOs.
