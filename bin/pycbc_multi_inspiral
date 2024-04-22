@@ -304,7 +304,7 @@ with ctx:
             assert flen == strain_segments_dict[ifo].freq_len, vname+err_msg
             vname = "Time length"
             assert tlen == strain_segments_dict[ifo].time_len, vname+err_msg
-            vname = "delta_f"
+            vname = "delta_f (=segment length inverse)"
             assert delta_f == strain_segments_dict[ifo].delta_f, vname+err_msg
     # segments is a dictionary of frequency domain objects, each of which
     # is the Fourier transform of the segments in strain_segments_dict
@@ -491,7 +491,6 @@ with ctx:
         gating_info={det: strain_dict[det].gating_info for det in strain_dict},
     )
 
-    # HERE
     # Template bank: filtering and thinning
     logging.info("Read in template bank")
     bank = waveform.FilterBank(
@@ -505,10 +504,10 @@ with ctx:
         approximant=args.approximant,
         out=template_mem,
     )
-    # Use injfilterrejector to reduce the bank to only those templates that
+
+    # Use inj_filter_rejector to reduce the bank to only those templates that
     # might actually find something
     n_bank = len(bank)
-    nfilters = 0
     logging.info("Full template bank size: %d", n_bank)
     for ifo in args.instruments:
         bank.template_thinning(inj_filter_rejector[ifo])
@@ -517,33 +516,23 @@ with ctx:
         logging.info("Template bank size after thinning: %d", n_bank)
 
     # Antenna patterns
-    antenna_patterns = [
-        [[0 for i in range(2)] for position_index in positions_array]
-        for i in range(len(args.instruments))
-    ]
-    for i, ifo in enumerate(args.instruments):
-        for position_index in positions_array:
-            antenna_patterns[i][position_index] = detector.Detector(
-                ifo
-            ).antenna_pattern(
-                sky_positions[0][position_index],
-                sky_positions[1][position_index],
-                polarization=0,
-                t_gps=t_gps,
-            )
+    ap = {
+        ifo: [detector.Detector(ifo).antenna_pattern(sky_positions[0][p_idx],
+                                                     sky_positions[1][p_idx],
+                                                     polarization=0,
+                                                     t_gps=t_gps)
+            for p_idx in positions_array] 
+        for ifo in args.instruments
+    }
 
-    ap = {}
-    for i, ifo in enumerate(args.instruments):
-        ap[ifo] = antenna_patterns[i]
-
+    logging.info("Starting the filtering...")
     # Loop over templates
     for t_num, template in enumerate(bank):
         # Loop over segments
         for s_num, stilde in enumerate(segments[args.instruments[0]]):
             stilde = {ifo: segments[ifo][s_num] for ifo in args.instruments}
-            # Filter check checks the 'inj_filter_rejector' options to
-            # determine whether to filter this template/segment
-            # if injections are present.
+            # Checks the 'inj_filter_rejector' options to determine whether
+            # to filter this template/segment if injections are present
             analyse_segment = True
             for ifo in args.instruments:
                 if not inj_filter_rejector[ifo].template_segment_checker(
@@ -558,15 +547,17 @@ with ctx:
                         n_bank,
                     )
                     analyse_segment = False
-            # Find detector sensitivities (sigma) and make array of
-            # normalised
+            # Find how loud the template is in each detector, i.e., its
+            # unnormalized matched-filter with itself. This quantity is
+            # used to normalize matched-filters with the data.
             sigmasq = {
                 ifo: template.sigmasq(segments[ifo][s_num].psd)
                 for ifo in args.instruments
             }
             sigma = {ifo: np.sqrt(sigmasq[ifo]) for ifo in args.instruments}
-            # Every time s_num is zero or we skip the segment, we run new
-            # template to increment the template index
+            # Every time s_num is zero , run new_template to increment the 
+            # template index
+ # HERE
             if s_num == 0:
                 event_mgr.new_template(tmplt=template.params, sigmasq=sigmasq)
             if not analyse_segment:
