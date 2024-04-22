@@ -405,15 +405,12 @@ with ctx:
         for ifo in args.instruments
     }
 
-    # Vetoes
-    # The existing SingleDetPowerChisq can calculate the single detector
-    # chisq for multiple ifos, so just use that directly.
-    logging.info("Initializing signal-based vetoes.")
-    # The existing SingleDetPowerChisq can calculate the single detector
-    # chisq for multiple ifos, so just use that directly.
+    # Chi-squares
+    logging.info("Initializing signal-based vetoes: power, bank, and auto")
+    # Directly use existing SingleDetPowerChisq, SingleDetBankVeto, and
+    # SingleDetAutoChisq to calculate single detector chi-squares for
+    # multiple IFOs
     power_chisq = vetoes.SingleDetPowerChisq(args.chisq_bins)
-    # The existing SingleDetBankVeto can calculate the single detector
-    # bank veto for multiple ifos, so we just use it directly.
     bank_chisq = vetoes.SingleDetBankVeto(
         args.bank_veto_bank_file,
         flen,
@@ -423,14 +420,13 @@ with ctx:
         phase_order=args.order,
         approximant=args.approximant,
     )
-    # Same here
     autochisq = vetoes.SingleDetAutoChisq(
         args.autochi_stride,
         args.autochi_number_points,
         onesided=args.autochi_onesided,
     )
-    # Here we take all frequency-domain segments and over-whiten them
-    # dividing by the PSD estimate
+
+    # Overwhiten all frequency-domain segments by dividing by the PSD estimate
     logging.info("Overwhitening frequency-domain data segments")
     for ifo in args.instruments:
         for seg in segments[ifo]:
