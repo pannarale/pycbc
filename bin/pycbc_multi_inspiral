@@ -521,7 +521,7 @@ with ctx:
                                                      sky_positions[1][p_idx],
                                                      polarization=0,
                                                      t_gps=t_gps)
-            for p_idx in positions_array] 
+              for p_idx in positions_array]
         for ifo in args.instruments
     }
 
@@ -555,7 +555,7 @@ with ctx:
                 for ifo in args.instruments
             }
             sigma = {ifo: np.sqrt(sigmasq[ifo]) for ifo in args.instruments}
-            # Every time s_num is zero , run new_template to increment the 
+            # Every time s_num is zero , run new_template to increment the
             # template index
             if s_num == 0:
                 event_mgr.new_template(tmplt=template.params, sigmasq=sigmasq)
@@ -656,8 +656,7 @@ with ctx:
                     logging.info(
                         "Found %d coincident triggers", len(coinc_idx)
                     )
-# HERE
-                    # Time delay is applied to indices
+                    # Time delay is applied to indices to have them at the IFOs
                     coinc_idx_det_frame = {
                         ifo: (
                             coinc_idx
@@ -666,11 +665,11 @@ with ctx:
                         % len(snr_dict[ifo])
                         for ifo in args.instruments
                     }
-                    # Calculate the coincident and coherent snr. Check we have
-                    # data before we try to compute the coherent snr
+                    # Calculate the coincident and coherent SNR.
+                    # First check there is enough data to compute the SNRs. 
                     if len(coinc_idx) != 0 and nifo > 1:
-                        # Find coinc snr at trigger times and apply coinc snr
-                        # threshold
+                        # Find coinc SNR at trigger times and apply coinc SNR 
+                        # threshold (which depopulates coinc_idx accordingly)
                         (
                             rho_coinc,
                             coinc_idx,
@@ -687,10 +686,11 @@ with ctx:
                         )
                         if len(coinc_idx) != 0:
                             logging.info(
-                                "Max coincident SNR = %.2f", max(rho_coinc)
+                                "With max coincident SNR = %.2f",
+                                max(rho_coinc)
                             )
-                    # If there is only one ifo, then coinc_triggers is just the
-                    # triggers from the ifo
+                    # If there is only one IFO, just take its triggers
+                    # and their SNRs
                     elif len(coinc_idx) != 0 and nifo == 1:
                         coinc_triggers = {
                             args.instruments[0]: snr[args.instruments[0]][
@@ -700,12 +700,15 @@ with ctx:
                     else:
                         coinc_triggers = {}
                         logging.info(
-                            "No triggers above coincident SNR threshold"
+                            "No coincident triggers were found"
                         )
-                    # If we have triggers above coinc threshold and more than 2
-                    # ifos, then calculate the coherent statistics
+                    # If there are triggers above coinc threshold and more
+                    # than 2 IFOs, then calculate the coherent statistics for
+                    # them and apply the cut on coherent SNR (with threshold
+                    # equal to the coinc SNR one)
                     if len(coinc_idx) != 0 and nifo > 2:
-                        # Plus and cross polarization
+                        logging.info("Calculating their coherent statistics")
+                        # Plus and cross antenna pattern dictionaries
                         fp = {
                             ifo: ap[ifo][position_index][0]
                             for ifo in args.instruments
@@ -748,7 +751,9 @@ with ctx:
                                 rho_coinc,
                             )
                             # Point by point, track the larger of the two
-                            # and store it
+                            # and store its information
+                            # TODO: this will fail if rho_coh_l or rho_coh_r
+                            # are None
                             max_idx = np.argmax([rho_coh_l, rho_coh_r], axis=0)
                             rho_coh = np.where(
                                 max_idx == 0, rho_coh_l, rho_coh_r
@@ -784,14 +789,14 @@ with ctx:
                                 rho_coinc,
                             )
                         logging.info(
-                            "%d triggers above coherent threshold",
+                            "%d triggers above coherent SNR threshold",
                             len(rho_coh),
                         )
                         if len(coinc_idx) != 0:
                             logging.info(
-                                "Max coherent SNR = %.2f", max(rho_coh)
+                                "With max coherent SNR = %.2f", max(rho_coh)
                             )
-                            # Find the null SNR and possibly apply null SNR cut
+                            # Calculate the null SNR and apply the null SNR cut
                             (
                                 null,
                                 rho_coh,
@@ -804,17 +809,17 @@ with ctx:
                                 snrv=coinc_triggers,
                                 index=coinc_idx,
                             )
-                            if len(coinc_idx) != 0:
-                                logging.info("Max null SNR = %.2f", max(null))
                             logging.info(
                                 "%d triggers above null threshold", len(null)
                             )
-                    # We are now going to find the individual detector chi2
-                    # values. To do this it is useful to find the indexes of
-                    # the triggers in the detector frame.
+                            if len(coinc_idx) != 0:
+                                logging.info("With max null SNR = %.2f", max(null))
+                    # Now calculate the individual detector chi2 values.
+                    # To do this it is useful to find the indices of the
+                    # (surviving) triggers in the detector frame.
                     if len(coinc_idx) != 0:
-                        # coinc_idx_det_frame is redefined to account for the
-                        # cuts to coinc_idx above
+                        # Updated coinc_idx_det_frame to account for the
+                        # effect of the cuts applied to far
                         coinc_idx_det_frame = {
                             ifo: (
                                 coinc_idx
@@ -823,10 +828,13 @@ with ctx:
                             % len(snr_dict[ifo])
                             for ifo in args.instruments
                         }
+                        # Build dictionary with per-IFO complex SNR time series
+                        # of the most recent set of triggers
                         coherent_ifo_trigs = {
                             ifo: snr_dict[ifo][coinc_idx_det_frame[ifo]]
                             for ifo in args.instruments
                         }
+# HERE
                         # Calculate the power and autochi2 values for the coinc
                         # indexes (this uses the snr timeseries before the time
                         # delay, so we need to undo it. Same for normalisation)
