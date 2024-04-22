@@ -398,7 +398,6 @@ with ctx:
             downsample_factor=args.downsample_factor,
             upsample_threshold=args.upsample_threshold,
             upsample_method=args.upsample_method,
-            cluster_function='symmetric',
         )
         for ifo in args.instruments
     }
