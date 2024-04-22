@@ -27,7 +27,6 @@ https://github.com/gwastro/pycbc/blob/master/examples/multi_inspiral/run.sh
 
 import logging
 import time
-from collections import defaultdict
 import argparse
 import numpy as np
 import h5py
@@ -44,12 +43,11 @@ from pycbc import (
     vetoes,
     waveform,
     DYN_RANGE_FAC,
-    add_common_pycbc_options,
+    add_common_pycbc_options
 )
 from pycbc.events import ranking, coherent as coh, EventManagerCoherent
 from pycbc.filter import MatchedFilterControl
-from pycbc.types import TimeSeries, zeros, float32, complex64
-from pycbc.types import MultiDetOptionAction
+from pycbc.types import zeros, float32, complex64
 from pycbc.vetoes import sgchisq
 
 
@@ -73,12 +71,12 @@ parser.add_argument(
     help="Single IFO SNR threshold for trigger generation."
 )
 # Commenting out unused options: remove if they remain unused
-#parser.add_argument(
-#    "--newsnr-threshold",
-#    type=float,
-#    metavar='THRESHOLD',
-#    help="Cut triggers with NewSNR less than THRESHOLD",
-#)
+# parser.add_argument(
+#     "--newsnr-threshold",
+#     type=float,
+#     metavar='THRESHOLD',
+#     help="Cut triggers with NewSNR less than THRESHOLD",
+# )
 parser.add_argument(
     "--low-frequency-cutoff",
     type=float,
@@ -299,15 +297,15 @@ with ctx:
             tlen = strain_segments_dict[ifo].time_len
             delta_f = strain_segments_dict[ifo].delta_f
         else:
-            try:
-                assert sample_rate == strain_dict[ifo].sample_rate
-                assert flen == strain_segments_dict[ifo].freq_len
-                assert tlen == strain_segments_dict[ifo].time_len
-                assert delta_f == strain_segments_dict[ifo].delta_f
-            except:
-                err_msg = "Sample rate, frequency length and time length "
-                err_msg += "must all be consistent across ifos."
-                raise ValueError(err_msg)
+            vname = "Sample rate"
+            err_msg = " must be consistent across all ifos."
+            assert sample_rate == strain_dict[ifo].sample_rate, vname+err_msg
+            vname = "Frequency length"
+            assert flen == strain_segments_dict[ifo].freq_len, vname+err_msg
+            vname = "Time length"
+            assert tlen == strain_segments_dict[ifo].time_len, vname+err_msg
+            vname = "delta_f"
+            assert delta_f == strain_segments_dict[ifo].delta_f, vname+err_msg
     # segments is a dictionary of frequency domain objects, each of which
     # is the Fourier transform of the segments in strain_segments_dict
     logging.info("Making frequency-domain data segments")
@@ -428,10 +426,13 @@ with ctx:
 
     # Overwhiten all frequency-domain segments by dividing by the PSD estimate
     logging.info("Overwhitening frequency-domain data segments")
+    # TODO: does this even modify segments?!
     for ifo in args.instruments:
         for seg in segments[ifo]:
             seg /= seg.psd
-    # The following dicts are used to initialize and feed the event manager
+
+    logging.info("Setting up event manager")
+    # But first build dictionaries to initialize and feed the event manager
     ifo_out_types = {
         'time_index': int,
         'ifo': int,  # IFO is stored as an int internally!
@@ -490,6 +491,7 @@ with ctx:
         gating_info={det: strain_dict[det].gating_info for det in strain_dict},
     )
 
+    # HERE
     # Template bank: filtering and thinning
     logging.info("Read in template bank")
     bank = waveform.FilterBank(
@@ -599,8 +601,8 @@ with ctx:
                     snr_ts[matched_filter[ifo].segments[s_num].analyze] * norm
                 )
                 norm_dict[ifo] = norm
-                # The correlation vector for each ifo. it is the  FFT of the snr
-                # (so inverse FFT it to get the snr).
+                # The correlation vector for each IFO.
+                # It is the FFT of the SNR (so inverse FFT it to get the SNR).
                 corr_dict[ifo] = corr.copy()
                 # Trigger indices list for each ifo
                 idx[ifo] = ind.copy()
@@ -692,7 +694,7 @@ with ctx:
                             time_delay_idx[slide][position_index],
                         )
                         logging.info(
-                            "%d coincident tiggers above coincident SNR threshold",
+                            "%d triggers above coincident SNR threshold",
                             len(coinc_idx),
                         )
                         if len(coinc_idx) != 0:
@@ -757,7 +759,8 @@ with ctx:
                                 project_r,
                                 rho_coinc,
                             )
-                            # Point by point, track the larger of the two and store it
+                            # Point by point, track the larger of the two
+                            # and store it
                             max_idx = np.argmax([rho_coh_l, rho_coh_r], axis=0)
                             rho_coh = np.where(
                                 max_idx == 0, rho_coh_l, rho_coh_r
