@@ -426,7 +426,6 @@ with ctx:
 
     # Overwhiten all frequency-domain segments by dividing by the PSD estimate
     logging.info("Overwhitening frequency-domain data segments")
-    # TODO: does this even modify segments?!
     for ifo in args.instruments:
         for seg in segments[ifo]:
             seg /= seg.psd
@@ -529,6 +528,7 @@ with ctx:
     # Loop over templates
     for t_num, template in enumerate(bank):
         # Loop over segments
+        # TODO: cleaner as for s_num, _ in enumerat(...)?
         for s_num, stilde in enumerate(segments[args.instruments[0]]):
             stilde = {ifo: segments[ifo][s_num] for ifo in args.instruments}
             # Checks the 'inj_filter_rejector' options to determine whether
@@ -614,6 +614,7 @@ with ctx:
             # Loop over time-slides, staring with the zero-lag
             for slide in range(args.num_slides + 1):
                 logging.info("Analyzing slide %d/%d", slide, args.num_slides)
+                # Loop over sky positions
                 for position_index in positions_array:
                     logging.info(
                         "Analyzing sky position %d/%d",
@@ -666,9 +667,9 @@ with ctx:
                         for ifo in args.instruments
                     }
                     # Calculate the coincident and coherent SNR.
-                    # First check there is enough data to compute the SNRs. 
+                    # First check there is enough data to compute the SNRs.
                     if len(coinc_idx) != 0 and nifo > 1:
-                        # Find coinc SNR at trigger times and apply coinc SNR 
+                        # Find coinc SNR at trigger times and apply coinc SNR
                         # threshold (which depopulates coinc_idx accordingly)
                         (
                             rho_coinc,
@@ -813,8 +814,12 @@ with ctx:
                                 "%d triggers above null threshold", len(null)
                             )
                             if len(coinc_idx) != 0:
-                                logging.info("With max null SNR = %.2f", max(null))
-                    # Now calculate the individual detector chi2 values.
+                                logging.info(
+                                    "With max null SNR = %.2f", max(null)
+                                )
+                    # Now calculate the individual detector chi2 values
+                    # and the SNR reweighted by chi2 and by null SNR
+                    # (no cut on reweighted SNR is applied).
                     # To do this it is useful to find the indices of the
                     # (surviving) triggers in the detector frame.
                     if len(coinc_idx) != 0:
@@ -834,10 +839,10 @@ with ctx:
                             ifo: snr_dict[ifo][coinc_idx_det_frame[ifo]]
                             for ifo in args.instruments
                         }
-# HERE
-                        # Calculate the power and autochi2 values for the coinc
-                        # indexes (this uses the snr timeseries before the time
-                        # delay, so we need to undo it. Same for normalisation)
+                        # Calculate the powerchi2 and autochi2 values of
+                        # remaining triggers (this uses the SNR timeseries
+                        # before the time delay, so we need to undo it; the
+                        # same holds for normalisation)
                         chisq = {}
                         chisq_dof = {}
                         for ifo in args.instruments:
@@ -876,12 +881,9 @@ with ctx:
                             reweighted_snr = ranking.newsnr(
                                 rho_sngl, network_chisq_dict
                             )
-                        # Need all out vals to be the same length. This means
-                        # the entries that are single values need to be
-                        # repeated once per event.
+                        # All out vals must be the same length, so single
+                        # value entries are repeated once per event
                         num_events = len(reweighted_snr)
-                        # the output will only be possible if
-                        # len(networkchi2) == num_events
                         for ifo in args.instruments:
                             (
                                 ifo_out_vals['bank_chisq'],
@@ -952,6 +954,9 @@ with ctx:
                             network_names,
                             [network_out_vals[n] for n in network_names],
                         )
+            # Left loops over sky positions and time-slides,
+            # but not loops over segments and templates.
+            # The triggers can be clustered
             if args.cluster_method == "window":
                 cluster_window = int(args.cluster_window * sample_rate)
             elif args.cluster_method == "template":
@@ -962,10 +967,12 @@ with ctx:
                 event_mgr.cluster_template_network_events(
                     'time_index', 'reweighted_snr', cluster_window, slide=slide
                 )
+        # Left loop over segments
         event_mgr.finalize_template_events()
+    # Left loop over templates
     logging.info("Filtering completed")
 
-logging.info('Writing output')
+logging.info("Writing output")
 event_mgr.write_events(args.output)
 
 logging.info("Finished")
