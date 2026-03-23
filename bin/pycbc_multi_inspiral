@@ -764,11 +764,16 @@ with ctx:
                     # idx[ifo] - time_delay_idx[slide][position_index][ifo]
                     # (which applies the necessary time shift by operating on
                     # indices) to be between 0 and len(snr_dict[ifo]).
+                    #for ifo in args.instruments:
+                    #    logging.info(ifo)
+                    #    logging.info(idx[ifo])
+                    #    logging.info(idx[ifo]-time_delay_idx[slide][position_index][ifo])
                     idx_dict = {
                         ifo: idx[ifo][
                             np.logical_and(
                                 idx[ifo]
-                                > time_delay_idx[slide][position_index][ifo],
+                                > time_delay_idx[slide][position_index][ifo]
+                                - len(snr_dict[ifo]),
                                 idx[ifo]
                                 < time_delay_idx[slide][position_index][ifo]
                                 + len(snr_dict[ifo]),
@@ -776,6 +781,26 @@ with ctx:
                         ]
                         for ifo in args.instruments
                     }
+                    #for ifo in args.instruments:
+                    #    logging.info(ifo)
+                    #    logging.info(sum(np.logical_and(
+                    #                                    idx[ifo]
+                    #                                    > time_delay_idx[slide][position_index][ifo]
+                    #                                    - len(snr_dict[ifo]),
+                    #                                    idx[ifo]
+                    #                                    < time_delay_idx[slide][position_index][ifo]
+                    #                                    + len(snr_dict[ifo]),
+                    #                                   )))
+                    #    logging.info(sum(np.logical_and(
+                    #                                    idx[ifo]
+                    #                                    > time_delay_idx[slide][position_index][ifo],
+                    #                                    idx[ifo]
+                    #                                    < time_delay_idx[slide][position_index][ifo]
+                    #                                    + len(snr_dict[ifo]),
+                    #                                   )))
+                    #    logging.info(idx[ifo])
+                    #    logging.info(idx[ifo]-time_delay_idx[slide][position_index][ifo])
+                    #    logging.info("end")
                     # Find indexes (related to geocenter time) of triggers that
                     # are coincident (in geocenter time) in multiple IFOs.
                     # This is done by calling the method that finds coincidences

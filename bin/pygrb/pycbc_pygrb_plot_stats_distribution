@@ -18,7 +18,8 @@
 
 
 """
-Plot distribution of BestNR/SNR/SNR after cuts of triggers in a PyGRB run.
+Plot distribution of BestNR/SNR/SNR after cuts/p-value of triggers in a
+PyGRB run.
 """
 
 # =============================================================================
@@ -51,7 +52,7 @@ parser = ppu.pygrb_initialize_plot_parser(description=__doc__)
 parser.add_argument("-F", "--trig-file", action="store", required=True,
                     help="Location of off-source trigger file")
 parser.add_argument("-x", "--x-variable", required=True,
-                    choices=["bestnr", "snr", "snraftercuts"],
+                    choices=["bestnr", "snr", "snraftercuts", "pvalue"],
                     help="Quantity to plot on the horizontal axis.")
 ppu.pygrb_add_bestnr_cut_opt(parser)
 ppu.pygrb_add_slide_opts(parser)
@@ -63,6 +64,7 @@ init_logging(opts.verbose, format="%(asctime)s: %(levelname)s: %(message)s")
 # Store options used multiple times in local variables
 trig_file = opts.trig_file
 stat = opts.x_variable
+
 
 # Set output directory
 logging.info("Setting output directory.")
@@ -144,9 +146,11 @@ for slide_id in slide_dict:
 # This is the data that will be plotted
 full_time_veto_max_snr = ppu.sort_stat(time_veto_max_snr)
 full_time_veto_max_snr_aftercuts = ppu.sort_stat(time_veto_max_snr_aftercuts)
-_, _, full_time_veto_max_bestnr = \
+# These are the sorted (loudest in trial) reweighted SNR values
+max_bestnr, _, full_time_veto_max_bestnr = \
     ppu.max_median_stat(slide_dict, time_veto_max_bestnr, trig_data[keys[2]],
                         total_trials)
+assert total_trials == len(full_time_veto_max_bestnr)
 # The 0.'s here force the histograms to start at (0, 1) if no trial
 # returned a no-event (i.e., BestNR = 0)
 if full_time_veto_max_bestnr[0] != 0.:
@@ -164,21 +168,20 @@ logging.info("SNR and bestNR maxima calculated.")
 # =========
 x_label_dict = {"bestnr": "BestNR",
                 "snr": "SNR",
-                "snraftercuts": "SNR after signal based vetoes"}
+                "snraftercuts": "SNR after signal based vetoes",
+                "pvalue": "p-value"}
 data_dict = {"bestnr": full_time_veto_max_bestnr,
              "snr": full_time_veto_max_snr,
-             "snraftercuts": full_time_veto_max_snr_aftercuts}
-fig = plt.figure()
-ax = fig.gca()
-ax.grid(True)
-ax.set_yscale("log")
-ax.set_xlabel(x_label_dict[stat])
-ax.set_ylabel("False alarm probability")
+             "snraftercuts": full_time_veto_max_snr_aftercuts,
+             "pvalue": np.array((0, 1))}
 # Some standard plot settings
 ymax = 1.2
 normalization = 1.
 epsilon = 1e-8
 num_bins = 50
+fig = plt.figure()
+ax = fig.gca()
+ax.grid(True)
 # Figure out binning
 min_stat = min(data_dict[stat])
 max_stat = max(data_dict[stat])
@@ -188,7 +191,13 @@ dx = bins[1] - bins[0]
 # Histogram each background instance separately and take stats
 hist_sum = np.zeros(len(bins), dtype=float)
 sq_hist_sum = np.zeros(len(bins), dtype=float)
-# Make histogram
+if stat == "pvalue":
+    #bestnr_bins = np.linspace(0, max_bestnr, num_bins + 1, endpoint=True) 
+    #data_dict[stat] = np.array([1 - sum(full_time_veto_max_bestnr > bestnr) / total_trials for bestnr in bestnr_bins])
+    # TODO: remove the bestnr value from full_time_veto_max_bestnr before counting with sum?
+    data_dict[stat] = np.array([1 - sum(full_time_veto_max_bestnr > bestnr) / total_trials for bestnr in full_time_veto_max_bestnr])
+    #data_dict[stat] = np.array([sum(full_time_veto_max_bestnr > bestnr) / total_trials for bestnr in full_time_veto_max_bestnr])
+# Histogram data of interest
 for instance in data_dict[stat]:
     y, x = np.histogram(instance, bins=bins_bg)
     x = np.delete(x, -1)
@@ -207,18 +216,41 @@ lower[lower <= epsilon] = epsilon
 means = means*normalization
 upper = upper*normalization
 lower = lower*normalization
-# Plot mean
-ax.plot(x + dx/2, means, 'r+', markersize=12)
-# 3 lines for aesthetic reasons: ensure that the width of the
-# bar on the far right right is the same as all the others
-x = np.append(x, x[-1]+dx/2)
-upper = np.append(upper, upper[-1])
-lower = np.append(lower, lower[-1])
-# Shade in the 1-standard deviation area
-ax.fill_between(x + dx/2, lower, upper, alpha=0.3, facecolor='y', step='mid')
-# Wrap up
-ax.set_xlim((0.9 * min_stat, 1.1 * max_stat))
-ax.set_ylim((0.6/N, ymax))
+# Plot
+if stat == "pvalue":
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    #diag = np.sort(np.random.uniform(low=0.0, high=1.0, size=(int(1e5), len(full_time_veto_max_bestnr))), axis=1)
+    diag = np.sort(np.random.uniform(low=min(means), high=1.0, size=(int(1e3), int(1e3))), axis=1)
+    #diag = np.linspace(0, 1, int(1e5), endpoint=True)
+    p_low = np.percentile(diag, 5, axis=0)
+    p_high = np.percentile(diag, 95, axis=0)
+    ax.plot(diag[0], diag[0], 'k--', linewidth=2.5, label="Uniform")
+    ax.plot(diag[1:], diag[1:], 'k--', linewidth=2.5)
+    ax.plot(p_low, np.linspace(1.0 / len(p_low), 1, len(p_low)), 'k:', linewidth=2.0)
+    ax.plot(p_high, np.linspace(1.0 / len(p_high), 1, len(p_high)), 'k:', linewidth=2.0)
+    #ax.ecdf(upper, complementary=False, label="Upper")
+    #ax.ecdf(lower, complementary=False, label="Lower")
+    ax.ecdf(means, complementary=False, label="Offsource")
+    ax.set_xlabel(x_label_dict["pvalue"])
+    ax.set_ylabel("Cumulative distribution")
+    ax.legend()
+else:
+    ax.set_yscale("log")
+    ax.set_xlabel(x_label_dict[stat])
+    ax.set_ylabel("False alarm probability")
+    # Plot mean
+    ax.plot(x + dx/2, means, 'r+', markersize=12)
+    # 3 lines for aesthetic reasons: ensure that the width of the
+    # bar on the far right right is the same as all the others
+    x = np.append(x, x[-1]+dx/2)
+    upper = np.append(upper, upper[-1])
+    lower = np.append(lower, lower[-1])
+    # Shade in the 1-standard deviation area
+    ax.fill_between(x + dx/2, lower, upper, alpha=0.3, facecolor='y', step='mid')
+    # Wrap up
+    ax.set_xlim((0.9 * min_stat, 1.1 * max_stat))
+    ax.set_ylim((0.6/N, ymax))
 plot_title = "Cumulative distribution of background triggers"
 plot_caption = \
     f"Background cumulative distribution of the {x_label_dict[stat]}"
