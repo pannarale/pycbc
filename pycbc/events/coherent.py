@@ -97,6 +97,12 @@ def get_coinc_indexes(idx_dict, time_delay_idx, min_nifos, wraparound_dict):
     if len(idx_dict) == 1:
         return counts[0]
     coinc_idx = counts[0][counts[1] > min_nifos - 1]
+    #if len(outarr[:num_idxs])!=len(coinc_idx):
+    #    print("Hey!", len(outarr[:num_idxs]), len(coinc_idx))
+    #if sorted(outarr[:num_idxs])!=sorted(coinc_idx):
+    #    print("Hey!")
+    #    print(sorted(outarr[:num_idxs]))
+    #    print(sorted(coinc_idx))
     return coinc_idx
 
 

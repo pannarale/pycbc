@@ -195,6 +195,7 @@ def add_condorpool_shared_site(sitecat, cp, local_path, local_url):
         )
     peg_home = peg_home.replace('bin/pegasus-plan', '')
     site.add_profiles(Namespace.ENV, key="PEGASUS_HOME", value=peg_home)
+    site.add_profiles(Namespace.ENV, key="getenv", value="False")
     sitecat.add_sites(site)
 
 
